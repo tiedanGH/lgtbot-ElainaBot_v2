@@ -1,0 +1,59 @@
+name: CMake
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+env:
+  # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
+  BUILD_TYPE: Release
+
+jobs:
+  build-on-ubuntu:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          sudo apt update
+          sudo apt install gcc-12 g++-12
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get remove libunwind-14 -y || true
+          sudo apt-get install -y \
+            libcurl4-openssl-dev \
+            libboost-python-dev libboost-system-dev \
+            libgoogle-glog-dev libgflags-dev libgtest-dev libsqlite3-dev \
+            qt6-webengine-dev python3-dev python3-pybind11 \
+            libprotobuf-dev protobuf-compiler
+
+      - name: Checkout repository and submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # 通过仓库内 build.sh 完成 cmake configure + build
+      # --test 默认开启 LGTBot 单元测试目标
+      - name: Build via build.sh
+        env:
+          CC: gcc-12
+          CXX: g++-12
+        run: |
+          chmod +x build.sh
+          bash build.sh --test -j15
+
+      - name: Verify build artifacts
+        run: |
+          set -e
+          test -f lgtbot_qq.so          && echo "✅ lgtbot_qq.so"
+          test -f build/libbot_core.so  && echo "✅ libbot_core.so"
+          test -f build/markdown2image  && echo "✅ markdown2image"
+          GAMES=$(find build/plugins -mindepth 2 -name 'libgame.so' | wc -l)
+          echo "✅ libgame.so 数量: $GAMES"
+          test "$GAMES" -gt 0
+
+      - name: Test
+        working-directory: build
+        run: ctest -C ${{ env.BUILD_TYPE }} --output-on-failure
