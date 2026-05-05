@@ -22,7 +22,7 @@
 >
 > *「LGT」源自日本漫画家甲斐谷忍《Liar Game》中的虚构组织「**L**iar **G**ame **T**ournament 事务所」*
 >
-> 一个基于 C++20 的多人文字推理游戏裁判机器人库，包含 50+ 种不同风格的游戏。所有游戏逻辑、引擎核心、图片渲染均由原作者 Slontia 设计实现。
+> 一个基于 C++20 的多人文字推理游戏裁判机器人库，包含 50+ 种不同风格的游戏。游戏逻辑、引擎核心、图片渲染均由原作者 Slontia 设计实现。
 
 本插件并未对 LGTBot 引擎做任何功能性修改，仅做：
 1. 把 [LGTBot](https://github.com/Slontia/lgtbot) 适配 [ElainaBot_v2](https://github.com/ElainaCore/ElainaBot_v2) QQ 官方机器人框架
@@ -123,6 +123,6 @@ plugins/lgtbot_qq/
 ## 链接
 
 - 🎮 LGTBot 上游仓库：https://github.com/Slontia/lgtbot
-- 🪝 Kook 版（本项目参考实现）：https://github.com/Slontia/lgtbot-khl
+- 🟢 KOOK 版（本项目参考实现）：https://github.com/Slontia/lgtbot-khl
 - 🤖 ElainaBot_v2 主框架：[https://github.com/ElainaCore/ElainaBot_v2](https://github.com/ElainaCore/ElainaBot_v2)
 - 📖 部署指南：[DEPLOY.md](./DEPLOY.md)
