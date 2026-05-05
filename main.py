@@ -136,6 +136,32 @@ _GAME_ACTION_RE = re.compile(r'^\s*/(新游戏|加入|随机游戏)(\s|$)')
 # key 形如 'g:<group_id>' 或 'u:<user_id>'
 _pending_buttons: dict[str, list] = {}
 
+# 媒体消息（msg_type=7）的 content 字段是 QQ 协议层面不解析 <@openid> 的纯文本，
+# 图文同条场景下把 mention 退化为可读的 "@昵称"（损失：无 ping 通知）
+_MENTION_RE = re.compile(r'<@([^>\s]+)>')
+
+
+def _humanize_mentions(text: str) -> str:
+    """把 <@openid> 转成 @昵称（用于图文消息 content）
+
+    QQ 协议中 msg_type=7 的 content 不解析 <@openid> 提及语法，
+    会原样显示为字面字符串。本函数从 _user_cache 取对应昵称替换，
+    保持图文单条消息的同时让文字可读。
+    """
+    if not text or '<@' not in text:
+        return text
+
+    def _repl(m):
+        uid = m.group(1)
+        info = _user_cache.get(uid, {})
+        name = info.get('name', '')
+        if name:
+            return f'@{name}'
+        # 缓存未命中：截短 uid 占位（避免泄露完整 openid 的同时仍可识别）
+        return f'@{uid[:6]}…' if len(uid) > 6 else f'@{uid}'
+
+    return _MENTION_RE.sub(_repl, text)
+
 
 def _target_key(target_id: str, is_uid: bool) -> str:
     return ('u:' if is_uid else 'g:') + target_id
@@ -283,11 +309,14 @@ def cb_send_image_message(target_id: str, is_uid: bool, image_path: str, content
         log.warning(f'读取图片失败: {e}')
         return
 
+    # QQ 媒体消息 content 不解析 <@openid> → 转 @昵称 保持可读
+    rendered_content = _humanize_mentions(content or '')
+
     async def _do():
         try:
             target_type = 'user' if is_uid else 'group'
             await sender.send_image(target_type, target_id, data,
-                                    content=content or '', msg_id=msg_id)
+                                    content=rendered_content, msg_id=msg_id)
         except Exception as e:
             log.warning(f'发送图片失败 ({target_id}): {e}')
 
