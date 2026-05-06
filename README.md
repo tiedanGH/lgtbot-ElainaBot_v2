@@ -33,8 +33,8 @@
 | 上游项目                                                                  | 作者                                     | 协议     |
 |-----------------------------------------------------------------------|----------------------------------------|--------|
 | [LGTBot 引擎](https://github.com/Slontia/lgtbot)                        | [@Slontia](https://github.com/Slontia) | LGPLv2 |
-| [lgtbot-khl (Kook 适配，本项目参考实现)](https://github.com/Slontia/lgtbot-khl) | [@Slontia](https://github.com/Slontia) | LGPLv2 |
-| [ElainaBot 框架](https://github.com/ElainaCore/ElainaBot_v2)            | [@冷曦](https://github.com/lengxi-root)  | MIT    |
+| [lgtbot-khl](https://github.com/Slontia/lgtbot-khl) (KOOK 适配，本项目参考实现) | [@Slontia](https://github.com/Slontia) | LGPLv2 |
+| [ElainaBot_v2 框架](https://github.com/ElainaCore/ElainaBot_v2)         | [@冷曦](https://github.com/lengxi-root)  | MIT    |
 | 本适配层                                                                  | 铁蛋                                     | LGPLv2 |
 
 ---
@@ -77,14 +77,16 @@ cd ../.. && python3 main.py
 
 ## 关键特性
 
-| 能力          | 实现                                                          |
-|-------------|-------------------------------------------------------------|
-| **零配置自动加载** | 作为 ElainaBot 插件，路径全部自包含在 `plugins/lgtbot_qq/`               |
-| **消息合并**    | C++ 端聚合 "@玩家 文本 + 图片" 到单条媒体消息（避免 QQ 端拆成两条）                  |
-| **玩家头像**    | 利用 `q.qlogo.cn/qqapp/{appid}/{openid}` 直链，LGTBot 渲染头像无需额外接口 |
-| **回调按钮**    | `/新游戏` `/加入` `/退出` 等命令自动附加交互按钮                              |
-| **欢迎菜单**    | 单独 @机器人无消息时回复模板菜单，含「帮助 / 游戏列表 / 排行大图 / 战绩」按钮                |
-| **优雅退出**    | 进行中对局拒绝释放引擎，避免数据丢失                                          |
+| 能力              | 实现                                                          |
+|-----------------|-------------------------------------------------------------|
+| **零配置自动加载**     | 作为 ElainaBot 插件，路径全部自包含在 `plugins/lgtbot_qq/`               |
+| **消息合并**        | C++ 端聚合 "@玩家 文本 + 图片" 到单条媒体消息（避免 QQ 端拆成两条）                  |
+| **玩家头像**        | 利用 `q.qlogo.cn/qqapp/{appid}/{openid}` 直链，LGTBot 渲染头像无需额外接口 |
+| **回调按钮**        | `/新游戏` `/加入` 等命令自动附加交互按钮                                    |
+| **欢迎菜单**        | 单独 @机器人时回复模板菜单，含「帮助 / 游戏列表 / 排行大图 / 战绩」等按钮                  |
+| **Web 面板拓展页**   | 侧边栏「LGTBot 机器人」：消息日志 + 页面主题 + 收发/群私多维过滤 + 自动刷新              |
+| **在线配置**        | `data/config.yaml` 在 Web 面板「插件 → 配置」可直接编辑保存                 |
+| **优雅退出**        | 进行中对局拒绝释放引擎，避免数据丢失                                          |
 
 ## QQ 协议相关限制（已知）
 
@@ -102,17 +104,30 @@ QQ 官方机器人协议层面的限制，**所有 QQ Bot 都会遇到**，与 L
 
 ```
 plugins/lgtbot_qq/
-├── main.py              ElainaBot 插件入口（消息派发 / 回调实现 / 按钮注入）
-├── lgtbot_qq.cc         C++ ↔ Python 桥接层（Boost.Python 模块）
-├── CMakeLists.txt       构建配置（自动探测 Python / Boost.Python 版本）
-├── build.sh             一键编译脚本（依赖自检 + 多种编译选项）
-├── DEPLOY.md            完整部署指南
-├── README.md            本文档
-├── lgtbot/              LGTBot 上游源码（submodule）
-└── data/                运行时数据（自动创建）
-    ├── config.yaml          ← 插件配置（首次启动自动生成）
-    ├── lgtbot.db
-    └── images/
+├── main.py                  ElainaBot 插件入口（消息派发 / 回调实现 / 按钮注入 / 配置加载）
+├── lgtbot_qq.cc             C++ ↔ Python 桥接层（Boost.Python 模块）
+├── CMakeLists.txt           构建配置（自动探测 Python / Boost.Python 版本）
+├── build.sh                 一键编译脚本（依赖自检 + 多种编译选项）
+├── DEPLOY.md                完整部署指南
+├── README.md                本文档
+├── LICENSE                  LGPLv2 许可证
+├── lgtbot/                  LGTBot 上游源码（submodule）
+│
+├── app/                     插件子模块（按功能拆分）
+│   ├── __init__.py
+│   └── message_log.py       Web 面板页面（日志缓冲 + HTML 模板 + 懒渲染注册）
+├── .github/
+│   └── workflows/
+│       └── cmake.yml        GitHub Actions CI（Ubuntu 编译 + ctest）
+│
+├── build/                   ⚙️ 编译产物（运行时不可删）
+│   ├── libbot_core.so
+│   ├── markdown2image
+│   └── plugins/<game>/libgame.so   各游戏插件
+└── data/                    🗂 运行时数据（自动创建）
+    ├── config.yaml          插件配置（首次启动自动生成）
+    ├── lgtbot.db            SQLite（用户 / 对局 / 排行榜）
+    └── images/              引擎临时渲染图片
 ```
 
 ## 许可证

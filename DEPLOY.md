@@ -93,7 +93,7 @@ bash build.sh --help          # 查看所有参数
 | `--gcov`                | `-DWITH_GCOV`        | `OFF`     | 覆盖率统计                  |
 | `--no-glog`             | `-DWITH_GLOG`        | `ON`      | glog 日志                |
 | `--no-sqlite`           | `-DWITH_SQLITE`      | `ON`      | SQLite 持久化（关闭后无排行榜/历史） |
-| `--no-games`            | `-DWITH_GAMES`       | `ON`      | 25+ 内置游戏插件             |
+| `--no-games`            | `-DWITH_GAMES`       | `ON`      | 50+ 内置游戏插件             |
 
 > 生产部署使用 `bash build.sh` 即可；只有需要跑 LGTBot 自带测试用例时才加 `--test`。
 
@@ -103,11 +103,12 @@ plugins/lgtbot_qq/
 ├── lgtbot_qq.so                     ← Python 扩展模块（必需）
 ├── build/
 │   ├── libbot_core.so               ← 引擎核心库（必需）
+│   ├── markdown2image               ← 游戏图片渲染器（游戏图片必需）
 │   └── plugins/                     ← 各游戏 .so（必需，引擎运行时扫描）
 │       ├── alchemist/libgame.so
 │       ├── mahjong/libgame.so
-│       └── ... (25+ 个游戏)
-└── lgtbot/                          ← C++ 源码（编译完成后可删）
+│       └── ... (50+ 个游戏)
+└── lgtbot/                          ← C++ 源码（编译时需要，但运行时不直接访问）
 ```
 
 > ⚠️ **不要删除 `build/` 目录** —— LGTBot 引擎运行时通过该路径动态加载游戏 `.so`。
@@ -121,11 +122,12 @@ cd ../..                # 回到 ElainaBot_v2 根目录
 python3 main.py
 ```
 
-启动日志中应看到：
+启动应看到类似日志：
 ```
-[plugin] LGTBot 桌游 已加载
-[plugin] LGTBot   初始化 LGTBot 引擎: db=plugins/lgtbot_qq/data/lgtbot.db
-[plugin] LGTBot   ✅ LGTBot 引擎已就绪 —— 在群 @ 机器人或私聊发送 #帮助
+[插件:LGTBot] LGTBot 管理员配置：1 人
+[插件:LGTBot] 初始化 LGTBot 引擎: db=plugins/lgtbot_qq/data/lgtbot.db
+[插件:LGTBot] ✅ LGTBot 引擎已就绪
+[插件:lgtbot_qq] 大型插件加载完成 (1 个处理器, 0.12s)
 ```
 
 完成。在 QQ 群里 @ 机器人发送 `#帮助` 即可看到游戏列表。
@@ -160,10 +162,18 @@ admin_uids: []
 |--------------|-------------|--------------------------------------------|
 | `admin_uids` | `list[str]` | LGTBot 内部管理员的 QQ openid 列表（逗号分隔字符串会被自动转列表） |
 
-**怎么填：**
+**两种填写方式（任选其一）：**
 
-1. 启动一次 ElainaBot，让目标管理员在群里给 bot 发任意消息
-2. 打开 ElainaBot Web 面板「日志」，找到该用户的 `user_id`（即 openid）
+**A. Web 面板在线编辑（推荐）**
+
+1. ElainaBot 主面板 → 左侧「插件」→ 找到 `lgtbot_qq` → 点击「配置」
+2. 直接编辑 `config.yaml`，保存即生效
+3. 部分修改可能需要在「插件管理」里 reload 一下本插件
+
+**B. 命令行直接编辑**
+
+1. 让目标管理员在群里给 bot 发任意消息
+2. Web 面板「日志」找到该用户的 `user_id`（即 openid）
 3. 编辑 `plugins/lgtbot_qq/data/config.yaml`：
    ```yaml
    admin_uids:
@@ -172,11 +182,25 @@ admin_uids: []
    ```
 4. 重启 ElainaBot 或在 Web 面板禁用→重新启用本插件
 
+### 5.2 Web 面板拓展页面
+
+启动后会在 ElainaBot 主面板**左侧导航栏**自动出现「**LGTBot 机器人**」入口。
+当前提供：
+
+| 功能           | 说明                                   |
+|--------------|--------------------------------------|
+| 📜 消息日志      | 实时记录本插件收 / 发的所有消息（环形缓冲，上限 500 条）     |
+| 🌓 白天 / 黑夜主题 | 右上角切换按钮，偏好持久化在浏览器 localStorage（默认白天） |
+| 🔍 多维过滤      | 全部 / 收到 / 发出 / 群聊 / 私聊               |
+| 🔄 自动刷新      | 每 3 秒拉新数据，可暂停 / 立即刷新                 |
+
+页面注册逻辑在 `app/message_log.py`，按相同范式可继续追加子模块（统计、房间监控等）。
+
 ---
 
 ## 6. 多 Bot 场景
 
-如果 ElainaBot 同时挂了多个 QQ Bot（`config/bot.yaml` 配置多条），LGTBot 默认使用**第一个 Bot** 收发消息。多 Bot 隔离不在当前版本支持范围内。
+如果 ElainaBot 同时挂了多个 QQ Bot（`config/bot.yaml` 配置多条），LGTBot 默认使用 **第一个Bot** 收发消息。多 Bot 隔离不在当前版本支持范围内。
 
 ---
 
