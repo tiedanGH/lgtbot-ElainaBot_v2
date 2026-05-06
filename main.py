@@ -35,6 +35,9 @@ from core.message.event import (
     AT_MESSAGE_CREATE, DIRECT_MESSAGE_CREATE,
 )
 
+# 子模块：触发 message_log 模块加载，注册 Web 面板「LGTBot 机器人」侧边栏页面
+from plugins.lgtbot_qq.app import message_log  # noqa: F401
+
 # 关键：必须在模块顶层 import 阶段捕获 PluginContext。
 # PluginManager 加载流程：
 #   1. _ctx_mod.ctx = plugin_ctx   ← set
@@ -138,7 +141,7 @@ _GAME_ACTION_BUTTONS = [[
 _MENU_BUTTONS = [
     [
         {'text': '📖 查看帮助',  'data': '/帮助',     'type': 2, 'style': 4},
-        {'text': '🎲 游戏列表',  'data': '/游戏列表', 'type': 2, 'style': 1},
+        {'text': '🎲 游戏列表',  'data': '/游戏列表', 'type': 2, 'style': 4},
     ],
     [
         {'text': '🏆 排行大图',  'data': '/排行大图', 'type': 2, 'style': 1},
@@ -291,6 +294,9 @@ def cb_send_text_message(target_id: str, is_uid: bool, msg: str):
     # 取出本目标的待附按钮（一次性消费）
     buttons = _pending_buttons.pop(_target_key(target_id, is_uid), None)
 
+    # Web UI 日志埋点
+    message_log.log_outgoing(target_id, is_uid, msg)
+
     async def _do():
         try:
             if is_uid:
@@ -341,6 +347,9 @@ def cb_send_image_message(target_id: str, is_uid: bool, image_path: str, content
 
     # QQ 媒体消息 content 不解析 <@openid> → 转 @昵称 保持可读
     rendered_content = _humanize_mentions(content or '')
+
+    # Web UI 日志埋点（带图片标记）
+    message_log.log_outgoing(target_id, is_uid, rendered_content, image=True)
 
     async def _do():
         try:
@@ -442,6 +451,10 @@ def _load_plugin_config() -> str:
 async def _setup():
     global _event_loop, _started
 
+    # ── 注册 Web 面板「LGTBot 机器人」拓展页面（当前内容仅为消息日志）──
+    # 即使引擎后续启动失败，页面也能用（页面会显示空，等编译好就有数据）
+    message_log.register()
+
     # ── 第一步：无条件确保配置文件存在 ─────────────────────────────────────
     # 即使后续 LGTBot 不可用 / 未编译，也要让 data/config.yaml 被创建出来，
     # 这样 Web UI 「插件配置」入口才能看到并允许用户编辑（解决"暂无配置文件"）
@@ -492,6 +505,12 @@ async def _setup():
 @on_unload
 async def _teardown():
     global _started
+    # 注销 Web 面板页面（无论引擎状态如何）
+    try:
+        message_log.unregister()
+    except Exception:
+        pass
+
     if not _started or not _LGTBOT_AVAILABLE:
         return
     if lgtbot_qq.release_bot_if_not_processing_games():
@@ -557,8 +576,12 @@ async def lgtbot_dispatch(event, match):
 
     # 空消息（仅 @bot）→ 回欢迎菜单，不进 LGTBot 引擎
     if not content:
+        # 日志：本次空消息也记下来，便于追踪用户首次接触
+        message_log.log_incoming(uid, gid, '(空消息：触发欢迎菜单)')
         try:
             await event.reply(_MENU_TEXT, buttons=_MENU_BUTTONS)
+            message_log.log_outgoing(gid or uid, not (event.is_group and gid),
+                                     '[欢迎菜单]')
         except Exception as e:
             log.warning(f'菜单回复失败: {e}')
         return
@@ -568,6 +591,9 @@ async def lgtbot_dispatch(event, match):
         target = gid if (event.is_group and gid) else uid
         if target:
             _pending_buttons[_target_key(target, not (event.is_group and gid))] = _GAME_ACTION_BUTTONS
+
+    # Web UI 日志埋点：记录所有派发给 LGTBot 引擎的消息
+    message_log.log_incoming(uid, gid if event.is_group else '', content)
 
     # 派发给 C++ 引擎（独立线程，避免 C++ match-lock 与 asyncio loop 互锁）
     try:
