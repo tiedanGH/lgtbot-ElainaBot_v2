@@ -85,15 +85,15 @@ bash build.sh --no-games      # 不编译内置游戏（仅引擎）
 bash build.sh --help          # 查看所有参数
 ```
 
-| 参数 | CMake 选项 | 默认 | 说明 |
-|------|------------|------|------|
-| `--test` / `--no-test` | `-DWITH_TEST` | `OFF` | LGTBot 内部单元测试（开发调试用） |
-| `--debug` / `--release` | `-DCMAKE_BUILD_TYPE` | `Release` | 构建类型 |
-| `--asan` | `-DWITH_ASAN` | `OFF` | AddressSanitizer |
-| `--gcov` | `-DWITH_GCOV` | `OFF` | 覆盖率统计 |
-| `--no-glog` | `-DWITH_GLOG` | `ON`  | glog 日志 |
-| `--no-sqlite` | `-DWITH_SQLITE` | `ON`  | SQLite 持久化（关闭后无排行榜/历史） |
-| `--no-games` | `-DWITH_GAMES` | `ON`  | 25+ 内置游戏插件 |
+| 参数                      | CMake 选项             | 默认        | 说明                     |
+|-------------------------|----------------------|-----------|------------------------|
+| `--test` / `--no-test`  | `-DWITH_TEST`        | `OFF`     | LGTBot 内部单元测试（开发调试用）   |
+| `--debug` / `--release` | `-DCMAKE_BUILD_TYPE` | `Release` | 构建类型                   |
+| `--asan`                | `-DWITH_ASAN`        | `OFF`     | AddressSanitizer       |
+| `--gcov`                | `-DWITH_GCOV`        | `OFF`     | 覆盖率统计                  |
+| `--no-glog`             | `-DWITH_GLOG`        | `ON`      | glog 日志                |
+| `--no-sqlite`           | `-DWITH_SQLITE`      | `ON`      | SQLite 持久化（关闭后无排行榜/历史） |
+| `--no-games`            | `-DWITH_GAMES`       | `ON`      | 25+ 内置游戏插件             |
 
 > 生产部署使用 `bash build.sh` 即可；只有需要跑 LGTBot 自带测试用例时才加 `--test`。
 
@@ -137,13 +137,40 @@ python3 main.py
 ```
 plugins/lgtbot_qq/
 ├── data/
+│   ├── config.yaml          ← 插件配置（首次启动自动生成）
 │   ├── lgtbot.db            ← SQLite 数据库（用户 / 对局 / 排行榜）
-│   ├── images/              ← 引擎生成的临时图片
-│   └── admin_uids.txt       ← (可选) LGTBot 管理员 openid，逗号分隔
+│   └── images/              ← 引擎生成的临时图片
 └── ...
 ```
 
-> **如果想授予 LGTBot 内部管理员权限**（如执行 `/重置赛季` 等命令），新建 `data/admin_uids.txt` 写入 openid 列表即可。否则 ElainaBot 自身的 `owner_ids` 机制不会传递给 LGTBot。
+### 5.1 插件配置 `data/config.yaml`
+
+首次启动时插件会自动生成下面这份模板：
+
+```yaml
+# LGTBot 内部管理员 openid 列表（不同于 ElainaBot 的 owner_ids）
+#   这些用户可执行 LGTBot 管理命令（如 /管理 重置赛季 等）
+#   留空则该机器人无 LGTBot 管理员；可在 Web 面板「日志」查 user_id
+admin_uids: []
+```
+
+**配置项说明：**
+
+| 字段           | 类型          | 说明                                         |
+|--------------|-------------|--------------------------------------------|
+| `admin_uids` | `list[str]` | LGTBot 内部管理员的 QQ openid 列表（逗号分隔字符串会被自动转列表） |
+
+**怎么填：**
+
+1. 启动一次 ElainaBot，让目标管理员在群里给 bot 发任意消息
+2. 打开 ElainaBot Web 面板「日志」，找到该用户的 `user_id`（即 openid）
+3. 编辑 `plugins/lgtbot_qq/data/config.yaml`：
+   ```yaml
+   admin_uids:
+     - 'AAAA-BBBB-CCCC-DDDD'
+     - 'EEEE-FFFF-GGGG-HHHH'
+   ```
+4. 重启 ElainaBot 或在 Web 面板禁用→重新启用本插件
 
 ---
 
@@ -155,12 +182,12 @@ plugins/lgtbot_qq/
 
 ## 7. QQ Official Bot 限制说明
 
-| 项目 | 说明 |
-|------|------|
-| **Mention 格式** | `<@openid>`（QQ Markdown 渲染）— 已在 C++ 侧硬编码 |
-| **主动推送** | QQ 严格限制主动消息，本插件用最近 5 分钟内的消息 `msg_id` 作为引用上下文。超时后的引擎主动消息（如游戏倒计时）会失败并仅记录日志 |
-| **用户头像** | QQ 不公开 openid → 头像 URL 映射，`get_user_avatar_url` 始终返回空。需要头像渲染的游戏（如 alchemist）将使用占位符 |
-| **群昵称** | 暂未实现 `GetUserNameInGroup`，统一返回事件中的 `username` |
+| 项目             | 说明                                                                                 |
+|----------------|------------------------------------------------------------------------------------|
+| **Mention 格式** | `<@openid>`（QQ Markdown 渲染）— 已在 C++ 侧硬编码                                           |
+| **主动推送**       | QQ 严格限制主动消息，本插件用最近 5 分钟内的消息 `msg_id` 作为引用上下文。超时后的引擎主动消息（如游戏倒计时）会失败并仅记录日志           |
+| **用户头像**       | QQ 不公开 openid → 头像 URL 映射，`get_user_avatar_url` 始终返回空。需要头像渲染的游戏（如 alchemist）将使用占位符 |
+| **群昵称**        | 暂未实现 `GetUserNameInGroup`，统一返回事件中的 `username`                                      |
 
 ---
 
@@ -178,12 +205,12 @@ rm -rf plugins/lgtbot_qq
 
 ## 9. 故障排查
 
-| 现象 | 排查 |
-|------|------|
-| `lgtbot_qq C++ 扩展未编译或导入失败` | 重跑 `bash build.sh`；查看 `plugins/lgtbot_qq/lgtbot_qq.so` 是否存在 |
-| `ImportError: undefined symbol: ...boost::python...` | Boost.Python 与编译时的 Python 版本不匹配 — `bash build.sh --clean` 重编译 |
-| `Load mod failed: ... undefined symbol: _ZN6google10LogMessage...` | glog 符号不可见。本插件已在 `main.py` 用 `RTLD_GLOBAL` 解决；若仍出现，确认未 `--no-glog` 编译，或试 `LD_PRELOAD=$(ldconfig -p \| grep libglog \| awk '{print $4}' \| head -1) python3 main.py` |
-| `图片渲染失败 (markdown2image 调用未生成文件)` 或 `markdown2image 二进制缺失` | 本插件在 `import` 时会切到 `build/` 目录让 LGTBot 找到 `markdown2image`。若仍报错：① 检查 `plugins/lgtbot_qq/build/markdown2image` 是否存在并可执行（`chmod +x`）；② 手动测试 `cd build && echo '# hi' \| ./markdown2image --output /tmp/x.png --width 400 --nowith_css --noprint_info`；③ 部分游戏依赖字体，需 `apt install fonts-noto-cjk`。不影响游戏核心运行，仅影响图片输出 |
-| `LGTBot 引擎启动失败` | 查 `_GAME_PATH` 下是否有 `*.so` 游戏插件；首次编译需要等待所有 game 子项编译完成 |
-| 消息发不出去 / 无响应 | 检查主框架日志中 sender 是否成功初始化；QQ Bot `appid/secret` 是否正确 |
-| 主动消息 (倒计时等) 失败 | QQ 限制，5 分钟内无活跃消息无法主动推送 — 引导玩家保持活跃即可 |
+| 现象                                                                 | 排查                                                                                                                                                                                                                                                                                                              |
+|--------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `lgtbot_qq C++ 扩展未编译或导入失败`                                         | 重跑 `bash build.sh`；查看 `plugins/lgtbot_qq/lgtbot_qq.so` 是否存在                                                                                                                                                                                                                                                     |
+| `ImportError: undefined symbol: ...boost::python...`               | Boost.Python 与编译时的 Python 版本不匹配 — `bash build.sh --clean` 重编译                                                                                                                                                                                                                                                   |
+| `Load mod failed: ... undefined symbol: _ZN6google10LogMessage...` | glog 符号不可见。本插件已在 `main.py` 用 `RTLD_GLOBAL` 解决；若仍出现，确认未 `--no-glog` 编译，或试 `LD_PRELOAD=$(ldconfig -p \| grep libglog \| awk '{print $4}' \| head -1) python3 main.py`                                                                                                                                             |
+| `图片渲染失败 (markdown2image 调用未生成文件)` 或 `markdown2image 二进制缺失`         | 本插件在 `import` 时会切到 `build/` 目录让 LGTBot 找到 `markdown2image`。若仍报错：① 检查 `plugins/lgtbot_qq/build/markdown2image` 是否存在并可执行（`chmod +x`）；② 手动测试 `cd build && echo '# hi' \| ./markdown2image --output /tmp/x.png --width 400 --nowith_css --noprint_info`；③ 部分游戏依赖字体，需 `apt install fonts-noto-cjk`。不影响游戏核心运行，仅影响图片输出 |
+| `LGTBot 引擎启动失败`                                                    | 查 `_GAME_PATH` 下是否有 `*.so` 游戏插件；首次编译需要等待所有 game 子项编译完成                                                                                                                                                                                                                                                          |
+| 消息发不出去 / 无响应                                                       | 检查主框架日志中 sender 是否成功初始化；QQ Bot `appid/secret` 是否正确                                                                                                                                                                                                                                                              |
+| 主动消息 (倒计时等) 失败                                                     | QQ 限制，5 分钟内无活跃消息无法主动推送 — 引导玩家保持活跃即可                                                                                                                                                                                                                                                                             |

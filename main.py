@@ -28,11 +28,21 @@ import threading
 import asyncio
 
 from core.plugin.decorators import handler, on_load, on_unload
+from core.plugin import context as _ctx_mod
 from core.base.logger import get_logger, PLUGIN
 from core.message.event import (
     GROUP_AT_MESSAGE_CREATE, C2C_MESSAGE_CREATE,
     AT_MESSAGE_CREATE, DIRECT_MESSAGE_CREATE,
 )
+
+# 关键：必须在模块顶层 import 阶段捕获 PluginContext。
+# PluginManager 加载流程：
+#   1. _ctx_mod.ctx = plugin_ctx   ← set
+#   2. 执行本文件顶层代码（此处可读到 ctx）
+#   3. _ctx_mod.ctx = None         ← reset
+#   4. 调用 @on_load 函数（此时 ctx 已是 None）
+# 所以不能在 @on_load 里 from core.plugin.context import ctx，必须现在抓住引用。
+_PLUGIN_CTX = _ctx_mod.ctx
 
 log = get_logger(PLUGIN, 'LGTBot')
 
@@ -111,21 +121,41 @@ _last_user_event:  dict[str, dict] = {}   # user_id  → {'msg_id', 'event_id', 
 _QQ_AVATAR_URL = 'https://q.qlogo.cn/qqapp/{appid}/{openid}/100'
 
 # ──────── 按钮模板 ─────────────────────────────────────────────────────────
-# enter=True：点击后自动发送（不需要用户再按"发送"）
-# type=2：回填到输入框（QQ 端会按 enter 决定是否自动提交）
+# 设计要点：本插件的按钮**不使用 `enter` 字段**。
+#   原因：当 bot.yaml 配置 `message.button_enter_to_send: true` 时，框架
+#         keyboard.py 会把 `type=2 + enter=True` 强制转成 `type=1`（纯
+#         callback 按钮）。type=1 在 QQ 协议层永远不会回填输入框，仅触发
+#         INTERACTION_CREATE → bot ACK → 客户端弹"操作成功"，与"点按钮 →
+#         文字进输入框"的本意冲突。
+#   去掉 enter 后保持 type=2 不被转换，行为：点击 → 文字回填到输入框 →
+#         用户手动点发送。如果用户希望"自动发送"，可在 bot.yaml 把
+#         button_enter_to_send 设为 false，并在按钮里加回 enter=True。
 _GAME_ACTION_BUTTONS = [[
-    {'text': '🟢 加入', 'data': '/加入', 'type': 2, 'enter': True, 'style': 1},
-    {'text': '🔴 退出', 'data': '/退出', 'type': 2, 'enter': True, 'style': 3},
+    {'text': '🟢 加入', 'data': '/加入', 'type': 2, 'style': 1},
+    {'text': '🔴 退出', 'data': '/退出', 'type': 2, 'style': 3},
 ]]
 
 _MENU_BUTTONS = [
     [
-        {'text': '📖 查看帮助',  'data': '/帮助',     'type': 2, 'enter': True, 'style': 4},
-        {'text': '🎲 游戏列表',  'data': '/游戏列表', 'type': 2, 'enter': True, 'style': 1},
+        {'text': '📖 查看帮助',  'data': '/帮助',     'type': 2, 'style': 4},
+        {'text': '🎲 游戏列表',  'data': '/游戏列表', 'type': 2, 'style': 1},
     ],
     [
-        {'text': '🏆 排行大图',    'data': '/排行大图',     'type': 2, 'enter': True, 'style': 0},
-        {'text': '📊 我的战绩',  'data': '/战绩',     'type': 2, 'enter': True, 'style': 0},
+        {'text': '🏆 排行大图',  'data': '/排行大图', 'type': 2, 'style': 1},
+        {'text': '📊 我的战绩',  'data': '/战绩',     'type': 2, 'style': 1},
+    ],
+    # 第 3 行：链接按钮（type=0）—— 不受 button_enter_to_send 影响
+    [
+        {'text': '仓库',
+         'link': 'https://github.com/tiedanGH/lgtbot-ElainaBot_v2'},
+        {'text': '网站',
+         'link': 'https://tiedan.site'},
+        {'text': '官群',
+         'link': ('https://qun.qq.com/universal-share/share?ac=1'
+                  '&authKey=GLoA6W7KujPW%2B%2B%2FeirVZVVEn61q%2FAmLFyd9mkJ8u%2Bv0E%2B2IooquHavHi9iaJSxKK'
+                  '&busi_data=eyJncm91cENvZGUiOiIxMDU5ODM0MDI0IiwidG9rZW4iOiJsTUFlUHZsdVJpSUhTc2dLSTBoeDI2M0IxS09kTGg3NzFsd1dvaVVLajVqTTIvRm9zaGlMTHBrekRIOGdVZHlaIiwidWluIjoiMjI5NTgyNDkyNyJ9'
+                  '&data=IMqVKIvDehyMv2ooaqlgzql0-Q9XENN4pK6qGR1mqYoZH5AFDBMmrflWNEFN-EOLeKuJTxLABAwgaaUnUp-iyw'
+                  '&svctype=4&tempid=h5_group_info')},
     ],
 ]
 
@@ -323,11 +353,99 @@ def cb_send_image_message(target_id: str, is_uid: bool, image_path: str, content
     _run_coro_blocking(_do())
 
 
+# ──────── 插件配置 ────────────────────────────────────────────────────────
+
+# 默认配置（首次启动会写入 data/config.yaml）
+_DEFAULT_CONFIG = {
+    'admin_uids': [],
+}
+
+# 配置项注释（写入 YAML 文件头部，方便用户编辑）
+_CONFIG_COMMENTS = {
+    'admin_uids': (
+        'LGTBot 内部管理员 openid 列表（不同于 ElainaBot 的 owner_ids）\n'
+        '#   这些用户可执行 LGTBot 管理命令（如 /管理 重置赛季 等）\n'
+        '#   留空则该机器人无 LGTBot 管理员；可在 Web 面板「日志」查 user_id'
+    ),
+}
+
+
+def _get_ctx():
+    """获取插件 PluginContext。
+
+    优先用模块顶层 import 阶段捕获的 _PLUGIN_CTX（最可靠）；
+    若不可用，尝试从全局 BotManager 的 plugin_manager 反查；
+    最后兜底手动构造一个（保证配置文件总能落地）。
+    """
+    if _PLUGIN_CTX is not None:
+        return _PLUGIN_CTX
+
+    # 反查：从 BotManager → PluginManager 取
+    try:
+        from core.bot.manager import _bot_manager_ref
+        if _bot_manager_ref is not None:
+            pm = getattr(_bot_manager_ref, 'plugin_manager', None)
+            if pm is not None:
+                # 单文件插件名为文件去掉 .py，多文件插件名为目录名
+                # 本插件是多文件形式，目录名 = lgtbot_qq
+                info = (pm.get_plugin('lgtbot_qq')
+                        if hasattr(pm, 'get_plugin') else None)
+                if info and getattr(info, 'ctx', None):
+                    return info.ctx
+    except Exception:
+        pass
+
+    # 兜底：直接构造（PluginContext 只是 data/ 目录的 YAML 读写器，无副作用）
+    try:
+        from core.plugin.context import PluginContext
+        return PluginContext('lgtbot_qq', _PLUGIN_DIR)
+    except Exception as e:
+        log.warning(f'构造 PluginContext 失败: {e}')
+        return None
+
+
+def _load_plugin_config() -> str:
+    """读取 data/config.yaml，返回 LGTBot 引擎需要的逗号分隔 admin 字符串
+
+    - 不存在则创建带注释的默认模板（此时 Web UI 才能看到）
+    - 存在但缺字段则自动补齐
+    - admin_uids 字段非法时降级为空（不阻断启动）
+    """
+    ctx = _get_ctx()
+
+    # ── 标准加载（ensure_config 保证字段齐全 + 写入注释）──
+    try:
+        if ctx is not None:
+            cfg = ctx.ensure_config(_DEFAULT_CONFIG,
+                                     filename='config.yaml',
+                                     comments=_CONFIG_COMMENTS)
+        else:
+            log.warning('PluginContext 完全不可用，使用默认配置（Web UI 将看不到配置文件）')
+            cfg = dict(_DEFAULT_CONFIG)
+    except Exception as e:
+        log.warning(f'加载配置异常，使用默认值: {e}')
+        cfg = dict(_DEFAULT_CONFIG)
+
+    uids = cfg.get('admin_uids', [])
+    if not isinstance(uids, list):
+        log.warning('config.yaml 中 admin_uids 应为列表，已忽略')
+        uids = []
+    admins_str = ','.join(str(u).strip() for u in uids if str(u).strip())
+    if admins_str:
+        log.info(f'LGTBot 管理员配置：{len(uids)} 人')
+    return admins_str
+
+
 # ──────── 插件生命周期 ────────────────────────────────────────────────────
 
 @on_load
 async def _setup():
     global _event_loop, _started
+
+    # ── 第一步：无条件确保配置文件存在 ─────────────────────────────────────
+    # 即使后续 LGTBot 不可用 / 未编译，也要让 data/config.yaml 被创建出来，
+    # 这样 Web UI 「插件配置」入口才能看到并允许用户编辑（解决"暂无配置文件"）
+    admins = _load_plugin_config()
 
     if not _LGTBOT_AVAILABLE:
         log.error('=' * 60)
@@ -338,17 +456,6 @@ async def _setup():
 
     # 捕获主事件循环 —— C++ 工作线程将通过 run_coroutine_threadsafe 调度到此循环
     _event_loop = asyncio.get_running_loop()
-
-    # admins 留空（依赖 ElainaBot 的 owner_ids 机制；如需 LGTBot 内部 admin
-    # 命令权限，可在 data/admin_uids.txt 写入 openid，逗号分隔）
-    admin_file = os.path.join(_DATA_DIR, 'admin_uids.txt')
-    admins = ''
-    if os.path.isfile(admin_file):
-        try:
-            with open(admin_file, 'r', encoding='utf-8') as f:
-                admins = f.read().strip()
-        except Exception:
-            admins = ''
 
     # 检查游戏目录是否存在已编译的游戏 .so
     if not os.path.isdir(_GAME_PATH):
@@ -379,7 +486,7 @@ async def _setup():
         return
 
     _started = True
-    log.info('✅ LGTBot 引擎已就绪 —— 在群 @ 机器人或私聊发送 #帮助')
+    log.info('✅ LGTBot 引擎已就绪')
 
 
 @on_unload
@@ -478,3 +585,9 @@ async def lgtbot_dispatch(event, match):
             ).start()
     except Exception as e:
         log.warning(f'派发消息失败: {e}')
+
+
+# INTERACTION_CREATE 处理：本插件按钮全部使用 type=2（无 enter），不会触发
+# callback 事件，无需 ACK handler。如果未来某个按钮真要走 type=1 callback 流程
+# （例如需要按钮根据上下文动态执行不同操作），再单独添加 INTERACTION_CREATE
+# handler 处理 —— 避免在这里全局兜底 ACK 干扰其他插件的交互逻辑。

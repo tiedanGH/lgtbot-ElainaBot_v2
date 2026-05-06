@@ -34,7 +34,7 @@
 |-----------------------------------------------------------------------|----------------------------------------|--------|
 | [LGTBot 引擎](https://github.com/Slontia/lgtbot)                        | [@Slontia](https://github.com/Slontia) | LGPLv2 |
 | [lgtbot-khl (Kook 适配，本项目参考实现)](https://github.com/Slontia/lgtbot-khl) | [@Slontia](https://github.com/Slontia) | LGPLv2 |
-| [ElainaBot 框架](https://github.com/ElainaCore/ElainaBot_v2)            | [@冷曦](https://github.com/lengxi-root)  | —      |
+| [ElainaBot 框架](https://github.com/ElainaCore/ElainaBot_v2)            | [@冷曦](https://github.com/lengxi-root)  | MIT    |
 | 本适配层                                                                  | 铁蛋                                     | LGPLv2 |
 
 ---
@@ -90,13 +90,13 @@ cd ../.. && python3 main.py
 
 QQ 官方机器人协议层面的限制，**所有 QQ Bot 都会遇到**，与 LGTBot 无关：
 
-| 限制                                                | 影响                          | 当前应对                                        |
-|---------------------------------------------------|-----------------------------|---------------------------------------------|
-| 主动消息需 `msg_id` / `event_id` 引用                    | 倒计时类被动推送可能失败                | 5 分钟事件上下文缓存                                 |
-| Markdown 图片 URL 必须腾讯白名单 CDN                       | 游戏盘面图无法内嵌 markdown          | 用 `msg_type=7 + content` 合并                 |
-| 媒体消息（`msg_type=7`）的 content 不解析 `<@openid>`        | 图文同条消息里的 @ 既不高亮也不 ping     | 自动转为可读的 `@昵称`（牺牲 ping 换图文同条 + 文字可读）   |
-| 媒体消息无法附加按钮（QQ 协议）                                | 图片消息不能带按钮                   | 仅文本回复附按钮                                    |
-| Linux only（Boost.Python + C++20）                  | Windows 编译复杂度极高             | 仅在 Linux/WSL 上构建                            |
+| 限制                                          | 影响                     | 当前应对                                |
+|---------------------------------------------|------------------------|-------------------------------------|
+| 主动消息需 `msg_id` / `event_id` 引用              | 倒计时类被动推送可能失败           | 5 分钟事件上下文缓存                         |
+| Markdown 图片 URL 必须腾讯白名单 CDN                 | 游戏盘面图无法内嵌 markdown     | 用 `msg_type=7 + content` 合并         |
+| 媒体消息（`msg_type=7`）的 content 不解析 `<@openid>` | 图文同条消息里的 @ 既不高亮也不 ping | 自动转为可读的 `@昵称`（牺牲 ping 换图文同条 + 文字可读） |
+| 媒体消息无法附加按钮（QQ 协议）                           | 图片消息不能带按钮              | 仅文本回复附按钮                            |
+| Linux only（Boost.Python + C++20）            | Windows 编译复杂度极高        | 仅在 Linux/WSL 上构建                    |
 
 ## 文件结构
 
@@ -110,9 +110,9 @@ plugins/lgtbot_qq/
 ├── README.md            本文档
 ├── lgtbot/              LGTBot 上游源码（submodule）
 └── data/                运行时数据（自动创建）
+    ├── config.yaml          ← 插件配置（首次启动自动生成）
     ├── lgtbot.db
-    ├── images/
-    └── admin_uids.txt   (可选) LGTBot 管理员白名单
+    └── images/
 ```
 
 ## 许可证
