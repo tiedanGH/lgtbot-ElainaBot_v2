@@ -15,12 +15,18 @@ log = get_logger(PLUGIN, 'LGTBot')
 
 DEFAULT_CONFIG = {
     'admin_uids': [],
+    'refresh_wait_timeout': 10.0,
 }
 CONFIG_COMMENTS = {
     'admin_uids': (
         'LGTBot 内部管理员 openid 列表（不同于 ElainaBot 的 owner_ids）\n'
         '#   这些用户可执行 LGTBot 管理命令（如 /管理 重置赛季 等）\n'
         '#   留空则该机器人无 LGTBot 管理员；可在 Web 面板「日志」查 user_id'
+    ),
+    'refresh_wait_timeout': (
+        '被动消息配额（5 条）耗尽时，等待用户点击「刷新」按钮的最长秒数\n'
+        '#   超时后会用旧引用强制尝试发送（QQ 多半会拒绝，但试一下不丢消息）\n'
+        '#   推荐 5–30 秒：过短玩家来不及点，过长命令响应延迟明显'
     ),
 }
 
@@ -80,4 +86,26 @@ def load_plugin_config() -> str:
     admins_str = ','.join(str(u).strip() for u in uids if str(u).strip())
     if admins_str:
         log.info(f'LGTBot 管理员配置：{len(uids)} 人')
+
+    # 把运行时可调字段套用到 quota 模块（每次 @on_load 都重新读取，
+    # 改完 config.yaml 在 Web UI reload 插件即生效，无需重启进程）
+    _apply_runtime_tunables(cfg)
+
     return admins_str
+
+
+def _apply_runtime_tunables(cfg: dict):
+    """把 config.yaml 中的可调字段下发到对应运行时模块"""
+    from . import quota
+    timeout = cfg.get('refresh_wait_timeout', 10.0)
+    try:
+        timeout_f = float(timeout)
+    except (TypeError, ValueError):
+        log.warning(f'refresh_wait_timeout 应为数值，已忽略 (got {timeout!r})')
+        return
+    if timeout_f <= 0:
+        log.warning(f'refresh_wait_timeout 应为正数，已忽略 (got {timeout_f})')
+        return
+    if quota.REFRESH_WAIT_TIMEOUT != timeout_f:
+        log.info(f'refresh_wait_timeout: {quota.REFRESH_WAIT_TIMEOUT}s → {timeout_f}s')
+        quota.REFRESH_WAIT_TIMEOUT = timeout_f
