@@ -87,9 +87,9 @@ async def _setup():
         log.error('=' * 60)
         return
 
-    log.info(f'初始化 LGTBot 引擎: 游戏数={game_count}, db={boot.DB_PATH}')
+    log.info(f'初始化 LGTBot 引擎: 游戏数={game_count}, db={boot.DB_PATH}, conf={boot.CONF_PATH}')
     ok = boot.lgtbot_qq.start(
-        boot.GAME_PATH, boot.DB_PATH, '', boot.IMG_PATH, admins,
+        boot.GAME_PATH, boot.DB_PATH, boot.CONF_PATH, boot.IMG_PATH, admins,
         callbacks.cb_get_user_name, callbacks.cb_get_user_avatar_url,
         callbacks.cb_send_text_message, callbacks.cb_send_image_message,
     )

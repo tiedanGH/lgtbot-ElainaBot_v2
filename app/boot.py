@@ -24,9 +24,26 @@ DATA_DIR   = os.path.join(PLUGIN_DIR, 'data')
 GAME_PATH  = os.path.join(BUILD_DIR, 'plugins')   # 各 libgame.so 所在目录
 DB_PATH    = os.path.join(DATA_DIR, 'lgtbot.db')
 IMG_PATH   = os.path.join(DATA_DIR, 'images')
+CONF_PATH  = os.path.join(DATA_DIR, 'lgtbot.json')   # LGTBot 引擎自身的配置
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(IMG_PATH, exist_ok=True)
+
+
+# ──────── LGTBot 引擎配置文件预生成 ───────────────────────────────────────
+# 启动时若 data/lgtbot.json 不存在则写入空 JSON。引擎自身在 LoadConfig 阶段
+# 也会兜底创建，这里前置一次让 Web UI「插件 → 配置」入口立刻可见可编辑。
+def _ensure_lgtbot_conf():
+    if os.path.isfile(CONF_PATH):
+        return
+    try:
+        with open(CONF_PATH, 'w', encoding='utf-8') as f:
+            f.write('{}\n')
+    except OSError:
+        pass
+
+
+_ensure_lgtbot_conf()
 
 # 让 `import lgtbot_qq` 能找到同目录下的 .so / .pyd
 if PLUGIN_DIR not in sys.path:
