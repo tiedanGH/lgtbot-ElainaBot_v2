@@ -23,8 +23,34 @@
 
 ### Commit Message
 - **小写开头**（`move ...` / `add ...`，不要 `Move ...`）
-- **全英文**，标题简短（≤60 字符），正文按需补充
+- **全英文**，标题简短（≤60 字符）
 - **不写动作类前缀** `feat:` / `fix:` / `refactor:` / `chore:` 等约定式前缀
+
+### 正文（body）使用规则
+
+| 改动类型                            | 是否写正文                             |
+|---------------------------------|-----------------------------------|
+| 单文件简单调整（修个 typo、调一行常量、调一个文案）    | **只写标题**，不要正文                     |
+| 单文件改动但行为上有非平凡影响（修 bug、加配置项、加日志） | 视情况：行为变化能从 diff 一眼看懂就只写标题；否则简短补一段 |
+| 跨多文件、跨多模块、影响多种行为                | **必须写正文**：分点说明改了什么、为什么、有什么连带影响    |
+| 复杂的设计权衡 / 历史踩坑总结                | 正文充分展开，给后人留下"为什么这么做"的线索           |
+
+✅ 简单改动只标题：
+```
+trim welcome menu text to focus on essentials
+disable AddressSanitizer in build script
+```
+
+✅ 复杂改动有正文：
+```
+survive hot-reload with active games and improve quota logic
+
+- Detect engine still running on @on_load via persistent attribute on
+  the C++ extension module (survives plugin reload). When games are
+  in progress, skip lgtbot_qq.start() ...
+- Share mutable state via the same persistent dict ...
+- Replace shared asyncio.Event with per-waiter Events ...
+```
 
 ### 模块前缀规则
 
