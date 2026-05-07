@@ -147,9 +147,10 @@ def build_refresh_button(is_last: bool = False) -> list:
                  改为「最终刷新」配 ⚠️ 高亮，提示玩家"再不点就没机会发了"
     """
     text = '⚠️ 最终刷新' if is_last else '🔄 刷新会话'
+    style = 1 if is_last else 0   # 最终按钮用主色提高视觉权重
     return [{
         'text': text,
         'data': RELAY_BUTTON_DATA,
         'type': 1,
-        'style': 0,
+        'style': style,
     }]

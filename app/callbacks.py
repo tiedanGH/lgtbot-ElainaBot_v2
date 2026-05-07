@@ -85,7 +85,7 @@ async def _send_text_quota_managed(target_id, is_uid, msg, extra_buttons):
             # 等待超时 → 不丢弃，强制使用现有引用尝试发送（QQ 多半会拒，但试一下）
             consumed = quota.try_consume_ref(key, ignore_quota=True)
             if consumed is None:
-                log.warning(f'❌ [无引用] {key} 经 {elapsed:.1f}s 等待后连旧引用都没有了，'
+                log.warning(f'❌ [无引用] {key} 经 {elapsed:.1f}s 等待后丢失旧引用，'
                             f'丢弃此条文本: {msg_preview!r}')
                 return
             log.warning(f'⚠️ [超时强发] {key} 经 {elapsed:.1f}s 无刷新，'
@@ -104,8 +104,8 @@ async def _send_text_quota_managed(target_id, is_uid, msg, extra_buttons):
     is_last = (count >= quota.REF_QUOTA)
     if count >= quota.REFRESH_BUTTON_THRESHOLD:
         btns.append(quota.build_refresh_button(is_last=is_last))
-        tag = '⚠️ 最终' if is_last else '🔄'
-        log.info(f'📊 [配额追踪] {key} 已用 {count}/{quota.REF_QUOTA} → 附 {tag} 刷新按钮')
+        tag = '⚠️' if is_last else '🔄'
+        log.info(f'📊 [配额追踪] {key} 已用 {count}/{quota.REF_QUOTA} → {tag}')
     btns_arg = btns if btns else None
 
     kwargs = {ref_type: ref_value}
@@ -175,7 +175,7 @@ async def _send_image_quota_managed(target_id, is_uid, data, content):
         if consumed is None:
             consumed = quota.try_consume_ref(key, ignore_quota=True)
             if consumed is None:
-                log.warning(f'❌ [无引用] {key} 经 {elapsed:.1f}s 等待后连旧引用都没有了，丢弃此条图片')
+                log.warning(f'❌ [无引用] {key} 经 {elapsed:.1f}s 等待后丢失旧引用，丢弃此条图片')
                 return
             log.warning(f'⚠️ [超时强发] {key} 经 {elapsed:.1f}s 无刷新，'
                         f'强制使用现有引用尝试发送图片')
