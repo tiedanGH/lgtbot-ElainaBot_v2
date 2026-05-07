@@ -60,6 +60,67 @@ _chdir_ok = os.path.isdir(BUILD_DIR)
 if _chdir_ok:
     os.chdir(BUILD_DIR)
 
+
+# ──────── 跨插件热重载持久化容器 ──────────────────────────────────────────
+# 插件热重载时，PluginManager 会把本插件的 Python 模块从 sys.modules 移除并
+# 重新 import；但 C++ 扩展 `lgtbot_qq` 一旦被 dlopen 就常驻进程内，sys.modules
+# 也保留缓存。利用这一点，把所有需要跨重载共享的可变容器挂到扩展模块对象上：
+#
+#   user_cache       - 用户昵称/头像缓存
+#   pending_buttons  - 命令触发的待附按钮（一次性消费）
+#   active_ref       - 被动消息配额状态（msg_id/event_id + count）
+#   ref_waiters      - 配额满时等待的 asyncio.Event 列表
+#
+# 这样旧 callback（持有旧模块引用）和新 dispatcher（新模块引用）操作的都是
+# 同一份字典，热重载后玩家命令仍能正确路由到旧引擎里仍在进行的游戏。
+_PERSIST_ATTR = '_elaina_persistent'
+_ENGINE_RUNNING_ATTR = '_elaina_engine_running'
+
+
+def _get_persistent() -> dict:
+    """返回挂在 C++ 扩展上的持久化容器，缺失则创建。
+
+    第一次插件加载：扩展模块上没有 _elaina_persistent → 创建新 dict
+    后续热重载：直接复用已有的 dict（旧字典里的所有 key/value 仍可访问）
+    """
+    if lgtbot_qq is None:
+        # 扩展未编译：返回一次性的 fallback dict（不会跨重载共享，但避免 None）
+        return {
+            'user_cache': {},
+            'pending_buttons': {},
+            'active_ref': {},
+            'ref_waiters': {},
+        }
+    p = getattr(lgtbot_qq, _PERSIST_ATTR, None)
+    if p is None:
+        p = {
+            'user_cache': {},
+            'pending_buttons': {},
+            'active_ref': {},
+            'ref_waiters': {},
+        }
+        try:
+            setattr(lgtbot_qq, _PERSIST_ATTR, p)
+        except Exception:
+            pass
+    return p
+
+
+def is_engine_running() -> bool:
+    """LGTBot C++ 引擎在上次 / 本次 plugin load 中已成功 start 且未释放？"""
+    if lgtbot_qq is None:
+        return False
+    return bool(getattr(lgtbot_qq, _ENGINE_RUNNING_ATTR, False))
+
+
+def mark_engine_running(running: bool):
+    """记录引擎运行状态到扩展模块属性（跨重载持久）"""
+    if lgtbot_qq is not None:
+        try:
+            setattr(lgtbot_qq, _ENGINE_RUNNING_ATTR, bool(running))
+        except Exception:
+            pass
+
 if hasattr(sys, 'setdlopenflags') and hasattr(os, 'RTLD_GLOBAL'):
     # 仅 POSIX；Windows 上 sys.setdlopenflags 不存在，对应平台也不需要此操作
     _old_flags = sys.getdlopenflags()

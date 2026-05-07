@@ -82,10 +82,16 @@ async def _send_text_quota_managed(target_id, is_uid, msg, extra_buttons):
         consumed = await quota.wait_and_consume(key, quota.REFRESH_WAIT_TIMEOUT)
         elapsed = _t.monotonic() - wait_start
         if consumed is None:
-            log.warning(f'⏰ [等待超时] {key} 经 {elapsed:.1f}s 仍无刷新事件，'
-                        f'丢弃此条文本: {msg_preview!r}')
-            return
-        log.info(f'✅ [配额已刷新] {key} 等 {elapsed:.1f}s 后续命成功，重发文本')
+            # 等待超时 → 不丢弃，强制使用现有引用尝试发送（QQ 多半会拒，但试一下）
+            consumed = quota.try_consume_ref(key, ignore_quota=True)
+            if consumed is None:
+                log.warning(f'❌ [无引用] {key} 经 {elapsed:.1f}s 等待后连旧引用都没有了，'
+                            f'丢弃此条文本: {msg_preview!r}')
+                return
+            log.warning(f'⚠️ [超时强发] {key} 经 {elapsed:.1f}s 无刷新，'
+                        f'使用现有引用强制尝试发送: {msg_preview!r}')
+        else:
+            log.info(f'✅ [配额已刷新] {key} 等 {elapsed:.1f}s 后续命成功，重发文本')
 
     ref_type, ref_value, count, ref_appid = consumed
     sender = helpers.get_sender(ref_appid)
@@ -167,9 +173,14 @@ async def _send_image_quota_managed(target_id, is_uid, data, content):
         consumed = await quota.wait_and_consume(key, quota.REFRESH_WAIT_TIMEOUT)
         elapsed = _t.monotonic() - wait_start
         if consumed is None:
-            log.warning(f'⏰ [等待超时] {key} 经 {elapsed:.1f}s 仍无刷新事件，丢弃此条图片')
-            return
-        log.info(f'✅ [配额已刷新] {key} 等 {elapsed:.1f}s 后续命成功，重发图片')
+            consumed = quota.try_consume_ref(key, ignore_quota=True)
+            if consumed is None:
+                log.warning(f'❌ [无引用] {key} 经 {elapsed:.1f}s 等待后连旧引用都没有了，丢弃此条图片')
+                return
+            log.warning(f'⚠️ [超时强发] {key} 经 {elapsed:.1f}s 无刷新，'
+                        f'强制使用现有引用尝试发送图片')
+        else:
+            log.info(f'✅ [配额已刷新] {key} 等 {elapsed:.1f}s 后续命成功，重发图片')
 
     ref_type, ref_value, count, ref_appid = consumed
     sender = helpers.get_sender(ref_appid)

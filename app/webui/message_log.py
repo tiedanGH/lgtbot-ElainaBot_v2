@@ -24,12 +24,19 @@ from threading import Lock
 from typing import Optional
 
 from core.plugin import web_pages
+from .. import boot
 
 # ──────── 日志缓冲 ────────────────────────────────────────────────────────
+# 跨插件热重载共享：日志 deque 与锁挂在 C++ 扩展上常驻进程，旧 callback
+# 写入的日志在 Web 面板（新模块注册的页面）也能被读到。
 
 _MAX_LOGS = 500
-_logs: deque = deque(maxlen=_MAX_LOGS)
-_lock = Lock()
+_p = boot._get_persistent()
+if 'logs_deque' not in _p:
+    _p['logs_deque'] = deque(maxlen=_MAX_LOGS)
+    _p['logs_lock'] = Lock()
+_logs: deque = _p['logs_deque']
+_lock: Lock = _p['logs_lock']
 
 PAGE_KEY = 'lgtbot-logs'
 

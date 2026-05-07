@@ -69,6 +69,25 @@ async def _setup():
     # 捕获主事件循环 —— C++ 工作线程通过 run_coroutine_threadsafe 调度到此循环
     _state.event_loop = asyncio.get_running_loop()
 
+    # ── 热重载检测：上一轮的引擎可能还活着 ─────────────────────────────────
+    # 若此时再调 lgtbot_qq.start()，C++ 会覆盖 g_bot_core，旧引擎实例被丢弃，
+    # 进行中的游戏全部失联（玩家命令进入新引擎找不到 match）。
+    # 解决：检测到引擎已在运行时，先尝试干净释放；释放失败（有游戏在跑）则
+    # 跳过 start()，复用现有引擎，让玩家可以继续游戏。
+    if boot.is_engine_running():
+        if boot.lgtbot_qq.release_bot_if_not_processing_games():
+            boot.mark_engine_running(False)
+            log.info('🔁 [热重载] 旧引擎已干净释放，将重新初始化')
+        else:
+            log.warning('=' * 60)
+            log.warning('🔁 [热重载] 检测到引擎已在运行 + 有进行中的游戏')
+            log.warning('   ▸ 已跳过引擎重启，复用现有引擎，玩家可继续游戏')
+            log.warning('   ▸ 注意：本次不刷新游戏列表 / 配置项；待所有游戏结束后')
+            log.warning('     再次保存任意文件触发热重载，将自动完成完整重启')
+            log.warning('=' * 60)
+            _state.started = True   # 让新 dispatcher 正常派发消息
+            return
+
     # 检查游戏目录是否存在已编译的游戏 .so
     if not os.path.isdir(boot.GAME_PATH):
         log.error('=' * 60)
@@ -97,6 +116,7 @@ async def _setup():
         log.error('LGTBot 引擎启动失败 (查看上方 stderr 输出)')
         return
 
+    boot.mark_engine_running(True)
     _state.started = True
     log.info('✅ LGTBot 引擎已就绪')
 
@@ -113,6 +133,8 @@ async def _teardown():
         return
     if boot.lgtbot_qq.release_bot_if_not_processing_games():
         _state.started = False
+        boot.mark_engine_running(False)
         log.info('LGTBot 引擎已安全关闭')
     else:
-        log.warning('存在进行中的游戏 —— 引擎未释放，强制退出可能丢失对局状态')
+        # 关键：保留 mark_engine_running(True)，下次 @on_load 据此跳过 start()
+        log.warning('存在进行中的游戏 —— 引擎未释放，热重载后将复用旧引擎以保持游戏状态')
