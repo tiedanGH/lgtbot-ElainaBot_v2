@@ -23,18 +23,22 @@ import glob
 PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BUILD_DIR  = os.path.join(PLUGIN_DIR, 'build')
 DATA_DIR   = os.path.join(PLUGIN_DIR, 'data')
-GAME_PATH  = os.path.join(BUILD_DIR, 'plugins')   # 各 libgame.so 所在目录
+ENGINE_DIR = os.path.join(DATA_DIR, 'engine')        # LGTBot 引擎内部文件目录
+GAME_PATH  = os.path.join(BUILD_DIR, 'plugins')      # 各 libgame.so 所在目录
 DB_PATH    = os.path.join(DATA_DIR, 'lgtbot.db')
 IMG_PATH   = os.path.join(DATA_DIR, 'images')
-CONF_PATH  = os.path.join(DATA_DIR, 'lgtbot.json')   # LGTBot 引擎自身的配置
+# 引擎自身的配置文件 —— 放在 data/engine/ 子目录避免污染 Web UI 的「插件 → 配置」
+# 入口（该入口非递归扫描 data/，子文件夹自动不可见，与 config.yaml 区分清楚）
+CONF_PATH  = os.path.join(ENGINE_DIR, 'lgtbot.json')
 
 os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(ENGINE_DIR, exist_ok=True)
 os.makedirs(IMG_PATH, exist_ok=True)
 
 
 # ──────── LGTBot 引擎配置文件预生成 ───────────────────────────────────────
-# 启动时若 data/lgtbot.json 不存在则写入空 JSON。引擎自身在 LoadConfig 阶段
-# 也会兜底创建，这里前置一次让 Web UI「插件 → 配置」入口立刻可见可编辑。
+# 启动时若 data/engine/lgtbot.json 不存在则写入空 JSON。引擎自身在 LoadConfig
+# 阶段也会兜底创建，这里前置一次确保 Python 一侧可以直接传 CONF_PATH 给 Start。
 def _ensure_lgtbot_conf():
     if os.path.isfile(CONF_PATH):
         return
