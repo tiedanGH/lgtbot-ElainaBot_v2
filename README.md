@@ -108,14 +108,15 @@ plugins/lgtbot_qq/
 ├── lgtbot_qq.cc             C++ ↔ Python 桥接层（Boost.Python 模块）
 ├── CMakeLists.txt           构建配置（自动探测 Python / Boost.Python 版本）
 ├── build.sh                 一键编译脚本（依赖自检 + 多种编译选项）
-├── DEPLOY.md                完整部署指南
+├── CLAUDE.md                AI 协作约定
+├── DEPLOY.md                部署指南
 ├── README.md                本文档
 ├── LICENSE                  LGPLv2 许可证
 │
 ├── app/                     插件功能模块（按职责拆分）
 │   ├── __init__.py
-│   ├── state.py             共享运行时状态容器
-│   ├── boot.py              C++ 扩展导入 + 路径常量（必须最先加载）
+│   ├── state.py             共享运行时状态容器（含跨重载持久化）
+│   ├── boot.py              C++ 扩展加载（chdir + lib*.so 预加载 + RTLD_GLOBAL）
 │   ├── buttons.py           按钮模板 + 命令触发正则
 │   ├── helpers.py           通用工具（sender / coro / mention / target_key）
 │   ├── quota.py             被动消息引用配额管理（绕过 5 条限制）
@@ -131,14 +132,16 @@ plugins/lgtbot_qq/
 ├── lgtbot/                  ⬇ git submodule（LGTBot 上游源码）
 │
 ├── build/                   ⚙️ CMake 编译产物（gitignored，运行时不可删）
-│   ├── libbot_core.so
-│   ├── markdown2image
+│   ├── libbot_core.so       引擎核心库（运行时由 boot.py 用 ctypes 预加载）
+│   ├── markdown2image       游戏图片渲染器
 │   └── plugins/<game>/libgame.so   各游戏插件
 │
 └── data/                    🗂 运行时数据（gitignored，自动创建）
-    ├── config.yaml          插件配置（首次启动自动生成）
+    ├── config.yaml          插件配置（Web UI 可在线编辑）
     ├── lgtbot.db            SQLite（用户 / 对局 / 排行榜）
-    └── images/              引擎临时渲染图片
+    ├── images/              引擎临时渲染图片
+    └── engine/              引擎内部文件（Web UI 不可见，避免污染配置入口）
+        └── lgtbot.json      LGTBot 引擎全局选项（首次启动写入空 JSON）
 ```
 
 ## 许可证
