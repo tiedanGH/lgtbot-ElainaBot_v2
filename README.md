@@ -104,27 +104,38 @@ QQ 官方机器人协议层面的限制，**所有 QQ Bot 都会遇到**，与 L
 
 ```
 plugins/lgtbot_qq/
-├── main.py                  ElainaBot 插件入口（消息派发 / 回调实现 / 按钮注入 / 配置加载）
+├── main.py                  ElainaBot 插件入口（精简，仅元数据 + 生命周期）
 ├── lgtbot_qq.cc             C++ ↔ Python 桥接层（Boost.Python 模块）
 ├── CMakeLists.txt           构建配置（自动探测 Python / Boost.Python 版本）
 ├── build.sh                 一键编译脚本（依赖自检 + 多种编译选项）
 ├── DEPLOY.md                完整部署指南
 ├── README.md                本文档
 ├── LICENSE                  LGPLv2 许可证
-├── lgtbot/                  LGTBot 上游源码（submodule）
 │
-├── app/                     插件子模块（按功能拆分）
+├── app/                     插件功能模块（按职责拆分）
 │   ├── __init__.py
-│   └── message_log.py       Web 面板页面（日志缓冲 + HTML 模板 + 懒渲染注册）
-├── .github/
-│   └── workflows/
-│       └── cmake.yml        GitHub Actions CI（Ubuntu 编译 + ctest）
+│   ├── state.py             共享运行时状态容器
+│   ├── boot.py              C++ 扩展导入 + 路径常量（必须最先加载）
+│   ├── buttons.py           按钮模板 + 命令触发正则
+│   ├── helpers.py           通用工具（sender / coro / mention / target_key）
+│   ├── quota.py             被动消息引用配额管理（绕过 5 条限制）
+│   ├── callbacks.py         C++ 引擎回调（cb_* 入口 + 异步发送实现）
+│   ├── dispatcher.py        @handler 注册（消息派发 + INTERACTION 处理）
+│   ├── config.py            data/config.yaml 读写
+│   └── webui/               Web 面板拓展页（侧边栏「LGTBot 机器人」）
+│       ├── __init__.py
+│       └── message_log.py   消息日志页（日志缓冲 + HTML 模板 + 懒渲染注册）
 │
-├── build/                   ⚙️ 编译产物（运行时不可删）
+├── .github/workflows/cmake.yml   GitHub Actions CI（Ubuntu 编译 + ctest）
+│
+├── lgtbot/                  ⬇ git submodule（LGTBot 上游源码）
+│
+├── build/                   ⚙️ CMake 编译产物（gitignored，运行时不可删）
 │   ├── libbot_core.so
 │   ├── markdown2image
 │   └── plugins/<game>/libgame.so   各游戏插件
-└── data/                    🗂 运行时数据（自动创建）
+│
+└── data/                    🗂 运行时数据（gitignored，自动创建）
     ├── config.yaml          插件配置（首次启动自动生成）
     ├── lgtbot.db            SQLite（用户 / 对局 / 排行榜）
     └── images/              引擎临时渲染图片
