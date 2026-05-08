@@ -15,9 +15,9 @@
 __plugin_meta__ = {
     'name': 'LGTBot 机器人',
     'author': '铁蛋',
-    'description': '基于 LGTBot C++ 引擎的游戏机器人',
+    'description': '基于 LGTBot C++ 引擎的游戏裁判机器人：提供多人桌游、竞技对战与自动裁判功能，让聊天室化身轻量级游戏竞技平台',
     'version': '1.0.0',
-    'github': 'https://github.com/slontia/lgtbot',
+    'github': 'https://github.com/tiedanGH/lgtbot-ElainaBot_v2',
 }
 
 import os

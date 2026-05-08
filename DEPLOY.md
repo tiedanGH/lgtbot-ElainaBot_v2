@@ -1,13 +1,13 @@
 # LGTBot × ElainaBot 部署指南
 
-> 把 [LGTBot](https://github.com/slontia/lgtbot) 桌游引擎接入 ElainaBot QQ 主框架，
+> 把 [LGTBot](https://github.com/slontia/lgtbot) 游戏引擎接入 ElainaBot QQ 主框架，
 > 一键编译 → 启动主框架即可使用，**无需任何额外配置**。
 
 ---
 
 ## 1. 系统依赖（仅编译时）
 
-只支持 **Linux**（lgtbot 引擎依赖 POSIX/Boost.Python，Windows 上编译复杂度极高）。
+目前只支持 **Linux**（lgtbot 引擎依赖 POSIX/Boost.Python，Windows 上编译复杂度极高）。
 
 ### Ubuntu / Debian
 ```bash
@@ -85,7 +85,7 @@ bash build.sh --help          # 查看所有参数
 
 ```bash
 cd ../..                # 回到 ElainaBot_v2 根目录
-python3 main.py
+python3 main.py         # 启动主框架，自动加载插件
 ```
 
 启动应看到类似日志：
