@@ -122,10 +122,13 @@ refresh_wait_timeout: 15.0
 | `admin_uids`           | `list[str]` | `[]`   | LGTBot 内部管理员的 QQ openid 列表    |
 | `refresh_wait_timeout` | `float`     | `15.0` | 配额耗尽时阻塞等待用户点击刷新按钮的秒数；超时改为强制发送 |
 
-> 💡 **图床（可选）**：启用 ElainaBot 主框架的 `image_hosting` 模块并配置 COS / B站
-> 后，本插件会自动把游戏图片上传到图床并用 markdown `![](url)` 内嵌发送（保留
-> 原生 `<@>` 提及和按钮）。未启用时自动回退到 `msg_type=7` 媒体消息，无需额外配置。
-> COS bucket 域名需先在 QQ 开放平台「消息 URL 配置」里报备，否则消息不显示。
+> 💡 **图床（可选）**：启用 ElainaBot 主框架的 `image_hosting` 模块并配置任一
+> 图床（COS / Nature / B站 / ChatGLM / Ukaka / 星野），本插件会按上述优先级
+> 自动选第一个可用的上传游戏图片，并用 markdown `![](url)` 内嵌发送（保留
+> 原生 `<@>` 提及和按钮）。全部未启用 / 上传失败时回退到 `msg_type=7` 媒体
+> 消息，无需额外配置。注意：图床域名需先在 QQ 开放平台「消息 URL 配置」里
+> 报备，否则消息不显示（COS 自有 CDN 与 Nature 的 download.nature.qq.com
+> 最易过审）。
 
 **两种填写方式（任选其一）：**
 

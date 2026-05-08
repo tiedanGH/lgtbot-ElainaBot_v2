@@ -2,13 +2,14 @@
 # -*- coding: utf-8 -*-
 """图床上传调度 + 图片尺寸解析
 
-通过 ElainaBot 的 image_hosting 模块（如已启用），按优先级尝试把本地
-图片上传成可内嵌 markdown 的 URL：COS → B站。任一成功即返回 URL；
-全部失败或 image_hosting 未启用时返回 None，由上层回退到 msg_type=7。
+主框架的 image_hosting 模块只暴露各图床独立的 upload_* 方法，本模块按优先级遍历：
+    COS → Nature → B站 → ChatGLM → Ukaka → 星野
+逐个尝试已启用（status() 返回 True）的图床，任一成功即返回 URL。
+全部失败 / image_hosting 未启用 → 返回 None，由上层回退到 msg_type=7。
 
 注意：QQ 官方机器人 markdown 中的 `![alt](url)` 要求 URL 域名已在
 QQ Bot 开放平台「消息 URL 配置」报备，否则消息会被丢弃 / 不显示。
-COS bucket 的 CDN 域名是最常见的报备目标。
+COS bucket CDN 与 Nature 的 download.nature.qq.com 是最易过审的目标。
 """
 
 from __future__ import annotations
@@ -57,10 +58,13 @@ def get_image_size(data: bytes) -> tuple[int, int]:
 
 
 # ──────── 单个图床的上传适配（统一返回 URL 或 None）──────────────────────
-# image_hosting 模块返回类型不一致：COS 返回 dict、B站返回 str、失败返
-# (False, reason) 元组。这里把语义统一为「成功 → URL 字符串，失败 → None」。
+# image_hosting 模块没有提供"自动选择"接口，只有 7 个独立 upload_*。
+# 返回类型大多统一为「URL 字符串 或 (False, reason) 元组」，仅 COS 返回
+# dict（含 file_url 键），QQ 频道返回 URL 已知是 404（test 插件已确认坏）。
+# 这里把所有可用图床的成败语义统一成「成功 → URL 字符串，失败 → None」。
 
 async def _try_cos(hosting, data, filename, user_id):
+    """COS 单独适配：返回 dict 而不是字符串"""
     try:
         r = await hosting.upload_cos(data, filename, user_id=user_id or None)
     except Exception as e:
@@ -72,21 +76,41 @@ async def _try_cos(hosting, data, filename, user_id):
     return None
 
 
-async def _try_bilibili(hosting, data, filename, user_id):
-    try:
-        r = await hosting.upload_bilibili(data)
-    except Exception as e:
-        log.warning(f'B站上传异常: {e}')
+def _make_simple_uploader(method_name: str, label: str):
+    """工厂：把 image_hosting 那些「URL 字符串 或 (False, reason)」格式的
+    upload_* 方法统一适配成本插件需要的 (str | None) 接口。新增图床时只需
+    在 _UPLOADERS 元组里加一行。"""
+    async def _try(hosting, data, filename, user_id):
+        method = getattr(hosting, method_name, None)
+        if method is None:
+            return None
+        try:
+            r = await method(data)
+        except Exception as e:
+            log.warning(f'{label} 上传异常: {e}')
+            return None
+        if isinstance(r, str) and r.startswith('http'):
+            return r
+        log.warning(f'{label} 上传失败: {r}')
         return None
-    if isinstance(r, str) and r.startswith('http'):
-        return r
-    log.warning(f'B站上传失败: {r}')
-    return None
+    _try.__name__ = f'_try_{method_name}'
+    return _try
 
 
-# 优先级：COS → B站
-# 不接 QQ 频道：lgtbot 是群机器人场景，频道 channel_id 一般缺失
-_UPLOADERS = (('cos', _try_cos), ('bilibili', _try_bilibili))
+# 优先级：COS（用户自有 bucket，可控） → Nature（腾讯系 CDN，QQ 白名单
+# 友好）→ B站（公开 CDN，QQ 通常信任）→ ChatGLM / Ukaka / 星野（第三方
+# 兜底，未必在 QQ 开放平台白名单）。第一个 status 返回 True 且上传成功
+# 的图床即用其 URL，余者跳过。
+# 不接 QQ 频道：image_hosting.upload_qq 返回的 URL 是 MD5 拼接 404 的
+# 假地址（test 插件已确认），lgtbot 群机器人场景也没有 channel_id。
+_UPLOADERS = (
+    ('cos',      _try_cos),
+    ('nature',   _make_simple_uploader('upload_nature',   'Nature')),
+    ('bilibili', _make_simple_uploader('upload_bilibili', 'B站')),
+    ('chatglm',  _make_simple_uploader('upload_chatglm',  'ChatGLM')),
+    ('ukaka',    _make_simple_uploader('upload_ukaka',    'Ukaka')),
+    ('xingye',   _make_simple_uploader('upload_xingye',   '星野')),
+)
 
 
 # ──────── 对外接口 ───────────────────────────────────────────────────────
