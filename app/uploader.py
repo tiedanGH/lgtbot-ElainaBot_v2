@@ -2,10 +2,14 @@
 # -*- coding: utf-8 -*-
 """图床上传调度 + 图片尺寸解析
 
-主框架的 image_hosting 模块只暴露各图床独立的 upload_* 方法，本模块按优先级遍历：
-    COS → Nature → B站 → ChatGLM → Ukaka → 星野
-逐个尝试已启用（status() 返回 True）的图床，任一成功即返回 URL。
-全部失败 / image_hosting 未启用 → 返回 None，由上层回退到 msg_type=7。
+主框架的 image_hosting 模块只暴露各图床独立的 upload_* 方法。本模块由
+config.yaml 的 `image_hosting` 字段指定**唯一**目标图床（cos / nature /
+bilibili / chatglm / ukaka / xingye），上传成功 → 返回 URL；上传失败 / 未
+配置 / image_hosting 模块未启用 → 返回 None，由上层回退到 msg_type=7。
+
+> 设计取舍：早期版本会按优先级遍历所有 status() 启用的图床直至成功，但
+> 单条失败的网络往返常达数秒，叠加多条会让游戏命令响应明显卡顿，因此
+> 改为「单选 + 失败即降级媒体消息」的快速失败策略。
 
 注意：QQ 官方机器人 markdown 中的 `![alt](url)` 要求 URL 域名已在
 QQ Bot 开放平台「消息 URL 配置」报备，否则消息会被丢弃 / 不显示。
@@ -97,12 +101,9 @@ def _make_simple_uploader(method_name: str, label: str):
     return _try
 
 
-# 优先级：COS（用户自有 bucket，可控） → Nature（腾讯系 CDN，QQ 白名单
-# 友好）→ B站（公开 CDN，QQ 通常信任）→ ChatGLM / Ukaka / 星野（第三方
-# 兜底，未必在 QQ 开放平台白名单）。第一个 status 返回 True 且上传成功
-# 的图床即用其 URL，余者跳过。
-# 不接 QQ 频道：image_hosting.upload_qq 返回的 URL 是 MD5 拼接 404 的
-# 假地址（test 插件已确认），lgtbot 群机器人场景也没有 channel_id。
+# 全部受支持的图床名（与 image_hosting 模块的 status() / upload_* 命名一致）。
+# 不接 QQ 频道：image_hosting.upload_qq 返回的 URL 是 MD5 拼接 404 的假地址
+# （test 插件已确认），lgtbot 群机器人场景也没有 channel_id。
 _UPLOADERS = (
     ('cos',      _try_cos),
     ('nature',   _make_simple_uploader('upload_nature',   'Nature')),
@@ -111,6 +112,10 @@ _UPLOADERS = (
     ('ukaka',    _make_simple_uploader('upload_ukaka',    'Ukaka')),
     ('xingye',   _make_simple_uploader('upload_xingye',   '星野')),
 )
+_UPLOADERS_MAP = dict(_UPLOADERS)
+
+# 由 config.py 在加载 / 重载配置时写入；空串 = 不启用图床（直接走 msg_type=7）。
+SELECTED_BACKEND: str = ''
 
 
 # ──────── 对外接口 ───────────────────────────────────────────────────────
@@ -128,7 +133,17 @@ def _get_hosting():
 
 
 async def upload_image(data: bytes, filename: str, user_id: str = '') -> str | None:
-    """按优先级尝试图床上传。任一成功立即返回 URL；全部失败返回 None。"""
+    """用 config.yaml 指定的单个图床上传。失败 / 未配置 → 返回 None。"""
+    backend = SELECTED_BACKEND
+    if not backend:
+        return None
+
+    fn = _UPLOADERS_MAP.get(backend)
+    if fn is None:
+        # 理论上 config.py 已校验过，这里防御兜底
+        log.warning(f'未知图床 {backend!r}，已禁用')
+        return None
+
     hosting = _get_hosting()
     if hosting is None:
         return None
@@ -137,14 +152,12 @@ async def upload_image(data: bytes, filename: str, user_id: str = '') -> str | N
         status = hosting.status() if hasattr(hosting, 'status') else {}
     except Exception:
         status = {}
-
-    enabled = [(n, fn) for n, fn in _UPLOADERS if status.get(n)]
-    if not enabled:
+    if not status.get(backend):
+        log.warning(f'图床 {backend} 在 image_hosting 模块中未启用，请检查主框架配置')
         return None
 
-    for name, fn in enabled:
-        url = await fn(hosting, data, filename, user_id)
-        if url:
-            log.info(f'图床 {name} 上传成功: {url}')
-            return url
+    url = await fn(hosting, data, filename, user_id)
+    if url:
+        log.info(f'图床 {backend} 上传成功: {url}')
+        return url
     return None

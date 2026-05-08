@@ -3,7 +3,9 @@
 """插件配置（data/config.yaml）—— 通过 ElainaBot 标准配置体系存取。
 
 字段：
-  · admin_uids: list[str]   LGTBot 内部管理员 openid 列表
+  · admin_uids: list[str]            LGTBot 内部管理员 openid 列表
+  · refresh_wait_timeout: float      被动消息配额耗尽后等待刷新按钮的秒数
+  · image_hosting: str               markdown 图片内嵌使用的单个图床名（留空 = 禁用）
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ log = get_logger(PLUGIN, 'LGTBot')
 DEFAULT_CONFIG = {
     'admin_uids': [],
     'refresh_wait_timeout': 15.0,
+    'image_hosting': '',
 }
 CONFIG_COMMENTS = {
     'admin_uids': (
@@ -27,6 +30,14 @@ CONFIG_COMMENTS = {
         '被动消息配额（5 条）耗尽时，等待用户点击「刷新」按钮的最长秒数\n'
         '#   超时后会用旧引用强制尝试发送（多半会被拒绝）\n'
         '#   推荐 5–30 秒：过短玩家来不及点，过长命令响应延迟明显'
+    ),
+    'image_hosting': (
+        '游戏图片走 markdown 内嵌时使用的图床（依赖主框架 image_hosting 模块）\n'
+        '#   留空 = 不启用图床，所有图片直接以 msg_type=7 媒体消息发送\n'
+        '#   可选值：cos / nature / bilibili / chatglm / ukaka / xingye\n'
+        '#   只尝试指定的这一个图床，上传失败立即回退 msg_type=7\n'
+        '#   （遍历所有启用图床耗时过长，故仅支持单选）\n'
+        '#   注意：图床域名需先在 QQ 开放平台「消息 URL 配置」报备'
     ),
 }
 
@@ -96,16 +107,31 @@ def load_plugin_config() -> str:
 
 def _apply_runtime_tunables(cfg: dict):
     """把 config.yaml 中的可调字段下发到对应运行时模块"""
-    from . import quota
+    from . import quota, uploader
+
     timeout = cfg.get('refresh_wait_timeout', 15.0)
     try:
         timeout_f = float(timeout)
     except (TypeError, ValueError):
         log.warning(f'refresh_wait_timeout 应为数值，已忽略 (got {timeout!r})')
-        return
-    if timeout_f <= 0:
-        log.warning(f'refresh_wait_timeout 应为正数，已忽略 (got {timeout_f})')
-        return
-    if quota.REFRESH_WAIT_TIMEOUT != timeout_f:
-        log.info(f'refresh_wait_timeout: {quota.REFRESH_WAIT_TIMEOUT}s → {timeout_f}s')
-        quota.REFRESH_WAIT_TIMEOUT = timeout_f
+    else:
+        if timeout_f <= 0:
+            log.warning(f'refresh_wait_timeout 应为正数，已忽略 (got {timeout_f})')
+        elif quota.REFRESH_WAIT_TIMEOUT != timeout_f:
+            log.info(f'refresh_wait_timeout: {quota.REFRESH_WAIT_TIMEOUT}s → {timeout_f}s')
+            quota.REFRESH_WAIT_TIMEOUT = timeout_f
+
+    backend = cfg.get('image_hosting', '')
+    if not isinstance(backend, str):
+        log.warning(f'image_hosting 应为字符串，已忽略 (got {backend!r})')
+        backend = ''
+    backend = backend.strip().lower()
+    valid = {name for name, _ in uploader._UPLOADERS}
+    if backend and backend not in valid:
+        log.warning(f'image_hosting 未知图床 {backend!r}，可选值：{sorted(valid)}；已禁用')
+        backend = ''
+    if uploader.SELECTED_BACKEND != backend:
+        old = uploader.SELECTED_BACKEND or '(未启用)'
+        new = backend or '(未启用)'
+        log.info(f'image_hosting: {old} → {new}')
+        uploader.SELECTED_BACKEND = backend

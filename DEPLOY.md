@@ -113,22 +113,24 @@ admin_uids: []
 #   超时后会用旧引用强制尝试发送（多半会失败）
 #   推荐 5–30 秒：过短玩家来不及点，过长命令响应延迟明显
 refresh_wait_timeout: 15.0
+# 游戏图片走 markdown 内嵌时使用的图床（依赖主框架 image_hosting 模块）
+#   留空 = 不启用图床，所有图片直接以 msg_type=7 媒体消息发送
+#   可选值：cos / nature / bilibili / chatglm / ukaka / xingye
+#   只尝试指定的这一个图床，上传失败立即回退 msg_type=7
+image_hosting: ''
 ```
 
 **配置项说明：**
 
-| 字段                     | 类型          | 默认     | 说明                            |
-|------------------------|-------------|--------|-------------------------------|
-| `admin_uids`           | `list[str]` | `[]`   | LGTBot 内部管理员的 QQ openid 列表    |
-| `refresh_wait_timeout` | `float`     | `15.0` | 配额耗尽时阻塞等待用户点击刷新按钮的秒数；超时改为强制发送 |
+| 字段                     | 类型          | 默认     | 说明                                                                                                     |
+|------------------------|-------------|--------|--------------------------------------------------------------------------------------------------------|
+| `admin_uids`           | `list[str]` | `[]`   | LGTBot 内部管理员的 QQ openid 列表                                                                             |
+| `refresh_wait_timeout` | `float`     | `15.0` | 配额耗尽时阻塞等待用户点击刷新按钮的秒数；超时改为强制发送                                                                          |
+| `image_hosting`        | `str`       | `''`   | markdown 图片内嵌使用的图床（`cos` / `nature` / `bilibili` / `chatglm` / `ukaka` / `xingye`），留空 = 直接走 msg_type=7 |
 
-> 💡 **图床（可选）**：启用 ElainaBot 主框架的 `image_hosting` 模块并配置任一
-> 图床（COS / Nature / B站 / ChatGLM / Ukaka / 星野），本插件会按上述优先级
-> 自动选第一个可用的上传游戏图片，并用 markdown `![](url)` 内嵌发送（保留
-> 原生 `<@>` 提及和按钮）。全部未启用 / 上传失败时回退到 `msg_type=7` 媒体
-> 消息，无需额外配置。注意：图床域名需先在 QQ 开放平台「消息 URL 配置」里
-> 报备，否则消息不显示（COS 自有 CDN 与 Nature 的 download.nature.qq.com
-> 最易过审）。
+> 💡 **图床（可选）**：启用 ElainaBot 主框架的 `image_hosting` 模块并配置目标图床后，把图床名填到本插件 `config.yaml` 的 `image_hosting` 字段
+> 本插件就会用 markdown `![](url)` 内嵌发送游戏图片（保留原生 `<@>` 提及和按钮）。**仅尝试指定的这一个图床**，上传失败立即回退 `msg_type=7` 媒体
+> 注意：图床域名需先在 QQ 开放平台「消息 URL 配置」里报备，否则消息不显示（COS 自有 CDN 与 Nature 的 download.nature.qq.com 最易过审）。
 
 **两种填写方式（任选其一）：**
 
