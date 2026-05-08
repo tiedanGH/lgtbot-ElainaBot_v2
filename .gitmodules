@@ -1,3 +1,4 @@
 [submodule "lgtbot"]
 	path = lgtbot
-	url = git@github.com:Slontia/lgtbot.git
+	url = https://github.com/Slontia/lgtbot.git
+	branch = master
