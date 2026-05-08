@@ -104,16 +104,28 @@ void HandleMessages(void* handler, const char* const id, const int is_uid,
 
 /**
  * GetUserName — 获取用户显示名
- * 格式统一 <%s>：openid 太长不适合 UI 显示，所以不再拼 uid 后缀。
- * Python 侧 cb_get_user_name 在缓存未命中时已自动返回 uid 作为名字，
- * 此函数只需把字符串包一层尖括号。Python 抛异常时 fallback 到 <uid>。
+ * 格式：<昵称(前4…后4)>，省略号中间隐藏 uid 主体（QQ openid 太长不适合 UI 直接展示）。
+ * uid 长度 ≤ 8 时不截断，原样输出。
+ * Python 侧 cb_get_user_name 缓存未命中时返回 uid 作为名字，此时退化为 <截短uid(截短uid)>。
+ * Python 抛异常时 fallback 到 <uid>（仅 uid，不截短不包昵称壳，便于排错）。
  */
 void GetUserName(void* handler, char* const buffer, const size_t size, const char* const uid)
 {
     try {
         AcquireGIL a;
         const std::string name = boost::python::call<std::string>(g_get_user_name, uid);
-        snprintf(buffer, size, "<%s>", name.c_str());
+        // 截短 uid：长度 > 8 时显示「前4字节 + UTF-8 省略号 + 后4字节」
+        std::string short_uid;
+        const size_t uid_len = std::strlen(uid);
+        if (uid_len > 8) {
+            short_uid.reserve(4 + 3 /* "…" UTF-8 */ + 4);
+            short_uid.append(uid, 4);
+            short_uid.append("\xe2\x80\xa6");  // U+2026 HORIZONTAL ELLIPSIS
+            short_uid.append(uid + uid_len - 4, 4);
+        } else {
+            short_uid.assign(uid, uid_len);
+        }
+        snprintf(buffer, size, "<%s(%s)>", name.c_str(), short_uid.c_str());
     } catch (...) {
         std::cerr << "[lgtbot_qq] GetUserName failed: " << uid << std::endl;
         snprintf(buffer, size, "<%s>", uid);
@@ -122,7 +134,8 @@ void GetUserName(void* handler, char* const buffer, const size_t size, const cha
 
 /**
  * GetUserNameInGroup — 获取群内用户显示名
- * QQ 群昵称需额外 API，此处直接委托 GetUserName（Python 侧可按需扩展缓存）
+ * QQ 群昵称需额外 API，此处直接委托 GetUserName（Python 侧可按需扩展缓存以
+ * 区分群昵称 / 全局昵称）
  */
 void GetUserNameInGroup(void* handler, char* const buffer, const size_t size,
                         const char* group_id, const char* const user_id)
