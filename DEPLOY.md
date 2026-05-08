@@ -122,6 +122,11 @@ refresh_wait_timeout: 10.0
 | `admin_uids`           | `list[str]` | `[]`   | LGTBot 内部管理员的 QQ openid 列表    |
 | `refresh_wait_timeout` | `float`     | `10.0` | 配额耗尽时阻塞等待用户点击刷新按钮的秒数；超时改为强制发送 |
 
+> 💡 **图床（可选）**：启用 ElainaBot 主框架的 `image_hosting` 模块并配置 COS / B站
+> 后，本插件会自动把游戏图片上传到图床并用 markdown `![](url)` 内嵌发送（保留
+> 原生 `<@>` 提及和按钮）。未启用时自动回退到 `msg_type=7` 媒体消息，无需额外配置。
+> COS bucket 域名需先在 QQ 开放平台「消息 URL 配置」里报备，否则消息不显示。
+
 **两种填写方式（任选其一）：**
 
 **A. Web 面板在线编辑（推荐）**

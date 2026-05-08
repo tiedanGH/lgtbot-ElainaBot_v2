@@ -173,7 +173,7 @@ PluginManager 文件保存触发热重载时：
 | INTERACTION 事件的 `event_id` 独立计 5 条                           | 用户点按钮 → 新 event_id → 又 5 条额度                   |
 | 媒体消息（`msg_type=7`）不解析 `<@openid>`                            | 在 `helpers.humanize_mentions` 中转 `@昵称`         |
 | 媒体消息无法挂按钮（QQ 协议）                                             | 仅文本回复附按钮                                       |
-| Markdown 图片 URL 必须腾讯白名单 CDN                                  | 游戏盘面图只能走 `msg_type=7 + content` 合并             |
+| Markdown 图片 URL 必须 QQ 开放平台报备的域名                              | 直发本地图片无法内嵌 markdown                            |
 | `button_enter_to_send=true` 配置会把 `type=2 + enter` 转 `type=1` | 本插件按钮一律不带 `enter` 字段                           |
 
 ---

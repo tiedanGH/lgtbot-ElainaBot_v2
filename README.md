@@ -81,6 +81,7 @@ cd ../.. && python3 main.py
 |-----------------|-------------------------------------------------------------|
 | **零配置自动加载**     | 作为 ElainaBot 插件，路径全部自包含在 `plugins/lgtbot_qq/`               |
 | **消息合并**        | C++ 端聚合 "@玩家 文本 + 图片" 到单条媒体消息（避免 QQ 端拆成两条）                  |
+| **markdown 图床**   | 图片优先上传到 image_hosting (COS / B站) 拿 URL 后用 markdown 内嵌，保留 `<@>` 原生 mention 和按钮；图床未启用 / 上传失败回退 msg_type=7 |
 | **玩家头像**        | 利用 `q.qlogo.cn/qqapp/{appid}/{openid}` 直链，LGTBot 渲染头像无需额外接口 |
 | **回调按钮**        | `/新游戏` `/加入` 等命令自动附加交互按钮                                    |
 | **欢迎菜单**        | 单独 @机器人时回复模板菜单，含「帮助 / 游戏列表 / 排行大图 / 战绩」等按钮                  |
@@ -95,7 +96,7 @@ QQ 官方机器人协议层面的限制，**所有 QQ Bot 都会遇到**，与 L
 | 限制                                          | 影响                     | 当前应对                                |
 |---------------------------------------------|------------------------|-------------------------------------|
 | 主动消息需 `msg_id` / `event_id` 引用              | 倒计时类被动推送可能失败           | 5 分钟事件上下文缓存                         |
-| Markdown 图片 URL 必须腾讯白名单 CDN                 | 游戏盘面图无法内嵌 markdown     | 用 `msg_type=7 + content` 合并         |
+| Markdown 图片 URL 必须 QQ 开放平台报备的域名             | 直发本地图片无法内嵌 markdown    | 启用 image_hosting 模块（COS bucket 报备域名）→ 上传后内嵌 URL；未启用回退 `msg_type=7` |
 | 媒体消息（`msg_type=7`）的 content 不解析 `<@openid>` | 图文同条消息里的 @ 既不高亮也不 ping | 自动转为可读的 `@昵称`（牺牲 ping 换图文同条 + 文字可读） |
 | 媒体消息无法附加按钮（QQ 协议）                           | 图片消息不能带按钮              | 仅文本回复附按钮                            |
 | Linux only（Boost.Python + C++20）            | Windows 编译复杂度极高        | 仅在 Linux/WSL 上构建                    |
@@ -123,6 +124,7 @@ plugins/lgtbot_qq/
 │   ├── callbacks.py         C++ 引擎回调（cb_* 入口 + 异步发送实现）
 │   ├── dispatcher.py        @handler 注册（消息派发 + INTERACTION 处理）
 │   ├── config.py            data/config.yaml 读写
+│   ├── uploader.py          图床上传调度（COS / B站）+ 图片尺寸解析
 │   └── webui/               Web 面板拓展页（侧边栏「LGTBot 机器人」）
 │       ├── __init__.py
 │       └── message_log.py   消息日志页（日志缓冲 + HTML 模板 + 懒渲染注册）

@@ -18,7 +18,7 @@ import os
 import time
 
 from core.base.logger import get_logger, PLUGIN
-from . import state, quota, helpers, boot
+from . import state, quota, helpers, boot, uploader
 from .webui import message_log
 
 log = get_logger(PLUGIN, 'LGTBot')
@@ -145,24 +145,30 @@ def cb_send_image_message(target_id: str, is_uid: bool, image_path: str, content
         log.warning(f'读取图片失败: {e}')
         return
 
-    rendered_content = helpers.humanize_mentions(content or '')
-    message_log.log_outgoing(target_id, is_uid, rendered_content, image=True)
+    raw_content = content or ''
+    # 日志展示用 humanize 版（更可读），实际发送时再按通道决定是否 humanize
+    message_log.log_outgoing(
+        target_id, is_uid,
+        helpers.humanize_mentions(raw_content), image=True,
+    )
+
+    filename = os.path.basename(image_path) or 'lgtbot.png'
 
     async def _do():
-        await _send_image_quota_managed(target_id, is_uid, data, rendered_content)
+        await _send_image_quota_managed(target_id, is_uid, data, raw_content, filename)
 
     helpers.run_coro_blocking(_do())
 
 
-async def _send_image_quota_managed(target_id, is_uid, data, content):
-    """图片发送核心：配额管理 + 上传 + 用 send_to_* 配合 media 字段
+async def _send_image_quota_managed(target_id, is_uid, data, raw_content, filename):
+    """图片发送核心：配额管理 + 优先图床+markdown，失败回退 media
 
-    用 send_to_group/user + media 而非 sender.send_image：前者同时支持
-    msg_id 和 event_id 引用，后者只能 msg_id。媒体消息无法挂按钮（QQ 协议），
-    所以图片消息不附刷新按钮。
+    发送通道二选一：
+      A. 图床 markdown：通过 image_hosting 上传图片得到 URL，用 markdown
+         `![](url)` 内嵌；保留 `<@openid>` 原生 mention，可挂刷新按钮
+      B. 媒体兜底：图床未启用 / 上传失败时走原有 msg_type=7 路径（content
+         字段需 humanize mentions，无法挂按钮）
     """
-    from core.message.media import upload_media_bytes  # 延迟导入
-
     key = helpers.target_key(target_id, is_uid)
     consumed = quota.try_consume_ref(key)
     if consumed is None:
@@ -188,6 +194,54 @@ async def _send_image_quota_managed(target_id, is_uid, data, content):
         log.warning(f'无可用 sender，丢弃图片 → {target_id}')
         return
 
+    # ── 通道 A：尝试图床 → markdown 内嵌 ─────────────────────────────────
+    user_id_for_cos = target_id if is_uid else ''
+    image_url = await uploader.upload_image(data, filename, user_id=user_id_for_cos)
+    if image_url:
+        if await _send_markdown_image(sender, target_id, is_uid, ref_type, ref_value,
+                                      raw_content, image_url, data, count):
+            return
+        # markdown 发送失败（极少见，比如域名未报备被 QQ 拒）→ 落回 media
+
+    # ── 通道 B：媒体兜底（msg_type=7）────────────────────────────────────
+    await _send_media_fallback(sender, target_id, is_uid, ref_type, ref_value, raw_content, data)
+
+
+async def _send_markdown_image(sender, target_id, is_uid, ref_type, ref_value,
+                               raw_content, image_url, data, count) -> bool:
+    """构造 markdown 文本 + 图片 + 按钮，调 send_to_*。成功返回 True"""
+    width, height = uploader.get_image_size(data)
+    parts = []
+    if raw_content:
+        parts.append(raw_content)
+    parts.append(f'![image #{width}px #{height}px]({image_url})')
+    md = '\n\n'.join(parts)
+
+    # markdown 通道支持挂按钮（不像 msg_type=7）
+    btns: list = []
+    is_last = (count >= quota.REF_QUOTA)
+    if count >= quota.REFRESH_BUTTON_THRESHOLD:
+        btns.append(quota.build_refresh_button(is_last=is_last))
+    btns_arg = btns if btns else None
+
+    kwargs = {ref_type: ref_value}
+    try:
+        if is_uid:
+            await sender.send_to_user(target_id, md, buttons=btns_arg, **kwargs)
+        else:
+            await sender.send_to_group(target_id, md, buttons=btns_arg, **kwargs)
+        return True
+    except Exception as e:
+        log.warning(f'markdown 图片发送失败 ({target_id}): {e}, 回退到媒体消息')
+        return False
+
+
+async def _send_media_fallback(sender, target_id, is_uid, ref_type, ref_value,
+                               raw_content, data):
+    """msg_type=7 媒体消息兜底：上传 file_info → send_to_* with media。
+    media 不解析 <@openid>，content 这里要先 humanize 成可读 @昵称。"""
+    from core.message.media import upload_media_bytes  # 延迟导入
+
     prefix = 'users' if is_uid else 'groups'
     upload_ep = f"/v2/{prefix}/{target_id}/files"
     try:
@@ -199,12 +253,13 @@ async def _send_image_quota_managed(target_id, is_uid, data, content):
         log.warning(f'图片上传失败 → {target_id}')
         return
 
+    rendered_content = helpers.humanize_mentions(raw_content)
     media_dict = {'file_info': file_info}
     kwargs = {ref_type: ref_value}
     try:
         if is_uid:
-            await sender.send_to_user(target_id, content, media=media_dict, **kwargs)
+            await sender.send_to_user(target_id, rendered_content, media=media_dict, **kwargs)
         else:
-            await sender.send_to_group(target_id, content, media=media_dict, **kwargs)
+            await sender.send_to_group(target_id, rendered_content, media=media_dict, **kwargs)
     except Exception as e:
         log.warning(f'发送图片失败 ({target_id}): {e}')
