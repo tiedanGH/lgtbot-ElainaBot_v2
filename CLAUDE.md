@@ -54,15 +54,18 @@ survive hot-reload with active games and improve quota logic
 
 ### 模块前缀规则
 
-| 改动范围                                                   | 前缀                     | 示例                                               |
-|--------------------------------------------------------|------------------------|--------------------------------------------------|
-| 入口 `main.py`                                           | **无前缀**                | `add @on_unload guard for active games`          |
-| 顶层文档（`README` / `DEPLOY` / `CLAUDE`）                   | **无前缀**                | `update README to reflect data/engine subfolder` |
+| 改动范围                                                          | 前缀                     | 示例                                               |
+|---------------------------------------------------------------|------------------------|--------------------------------------------------|
+| 入口 `main.py`                                                  | **无前缀**                | `add @on_unload guard for active games`          |
+| 顶层文档（`README` / `DEPLOY` / `CLAUDE`）单独改动                      | **无前缀**                | `update README to reflect data/engine subfolder` |
 | 顶层构建文件（`LGTBot_ElainaBot.cc` / `build.sh` / `CMakeLists.txt`） | **无前缀**                | `disable AddressSanitizer in build script`       |
-| `app/` 下任一子模块                                          | **模块文件名（不带路径、不带 .py）** | `quota: fix race in shared Event`                |
-| 多模块 / 跨层混合改动                                           | **无前缀**，按最高层职责描述       | `survive hot-reload with active games`           |
+| `app/` 下任一子模块                                                 | **模块文件名（不带路径、不带 .py）** | `quota: fix race in shared Event`                |
+| 子模块 + 同步更新 README / DEPLOY                                    | **跟主代码变化的 prefix**     | `uploader: extend dispatch to all backends`      |
+| 多个 app/ 子模块都有 *功能性* 变化                                        | **无前缀**，按最高层职责描述       | `survive hot-reload with active games`           |
 
-**关键约束：前缀只用文件名，不带路径。** 路径会随重构变化（今天 `app/quota.py` 明天可能变 `app/runtime/quota.py`），但模块名相对稳定。
+**关键约束 ①：前缀只用文件名，不带路径。** 路径会随重构变化（今天 `app/quota.py` 明天可能变 `app/runtime/quota.py`），但模块名相对稳定。
+
+**关键约束 ②：README / DEPLOY 同步不算"混合改动"。** 它们是 §4 同步规则强制要求的副作用，prefix 跟主代码变化的位置走。只有多个 `app/` 子模块都有**功能性**变化时才用"无前缀"。
 
 ✅ 好：
 ```
