@@ -51,13 +51,17 @@ MENU_BUTTONS = [
 GAME_ACTION_RE = re.compile(r'^\s*/(新游戏|加入|随机游戏)(\s|$)')
 
 # 单独 @ bot（content 为空）时回复的欢迎语
-MENU_TEXT = (
+MENU_TEXT_HEADER = (
     '## 🎮 LGT-Bot 机器人\n'
     '\n'
     '---\n'
     '\n'
+)
+MENU_TEXT_BODY = (
     '▸ 群内 @我 + `/新游戏 <名称>` 创建房间\n'
     '▸ 发送 `/加入` 即可参加游戏\n'
     '▸ 也可私聊体验单机游戏\n\n'
     '👇 点下方按钮快速开始'
 )
+# 兼容旧引用：拼接版
+MENU_TEXT = MENU_TEXT_HEADER + MENU_TEXT_BODY

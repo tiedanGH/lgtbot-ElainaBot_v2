@@ -7,6 +7,7 @@
 """
 
 from __future__ import annotations
+import os
 import time
 import threading
 
@@ -18,10 +19,31 @@ from core.message.event import (
     INTERACTION_CREATE,
 )
 
-from . import state, quota, helpers, boot, buttons
+from . import state, quota, helpers, boot, buttons, uploader
 from .webui import message_log
 
 log = get_logger(PLUGIN, 'LGTBot')
+
+# 菜单 logo 文件路径（仓库内置）
+_MENU_LOGO_PATH = os.path.join(boot.PLUGIN_DIR, 'images', 'logo_transparent_colorful.png')
+
+
+async def _resolve_menu_logo() -> dict | None:
+    """读取 images/logo_transparent_colorful.png 并通过图床上传 + 23h 缓存。
+
+    任何异常都吞掉返回 None：菜单 logo 仅是装饰，不应阻断欢迎菜单回复。
+    返回的字典含 ``url`` / ``width`` / ``height``，可直接拼 markdown。
+    """
+    try:
+        if not os.path.isfile(_MENU_LOGO_PATH):
+            return None
+        with open(_MENU_LOGO_PATH, 'rb') as f:
+            data = f.read()
+        return await uploader.upload_image_cached(
+            data, 'menu_logo.png', cache_key='menu:logo')
+    except Exception as e:
+        log.debug(f'菜单 logo 解析失败: {e}')
+        return None
 
 # 本插件监听的消息事件类型
 _LGT_MSG_EVENTS = frozenset({
@@ -64,7 +86,14 @@ async def lgtbot_dispatch(event, match):
     if not content:
         message_log.log_incoming(uid, gid, '(空消息：触发欢迎菜单)')
         try:
-            await event.reply(buttons.MENU_TEXT, buttons=buttons.MENU_BUTTONS)
+            logo = await _resolve_menu_logo()
+            if logo and logo.get('url'):
+                md = (f'![logo #{logo["width"]}px #{logo["height"]}px]'
+                      f'({logo["url"]})\n\n'
+                      + buttons.MENU_TEXT_BODY)
+            else:
+                md = buttons.MENU_TEXT_HEADER + buttons.MENU_TEXT_BODY
+            await event.reply(md, buttons=buttons.MENU_BUTTONS)
             message_log.log_outgoing(gid or uid, not (event.is_group and gid),
                                      '[欢迎菜单]')
         except Exception as e:

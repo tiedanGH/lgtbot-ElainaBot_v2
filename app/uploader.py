@@ -18,6 +18,8 @@ COS bucket CDN 与 Nature 的 download.nature.qq.com 是最易过审的目标。
 
 from __future__ import annotations
 import struct
+import hashlib
+import time as _time
 from core.base.logger import get_logger, PLUGIN
 
 log = get_logger(PLUGIN, 'LGTBot')
@@ -160,4 +162,62 @@ async def upload_image(data: bytes, filename: str, user_id: str = '') -> str | N
     if url:
         log.info(f'图床 {backend} 上传成功: {url}')
         return url
+    return None
+
+
+# ──────── 带缓存的上传（用于固定图片，如菜单 logo） ───────────────────────
+# 进程内 dict，不挂 boot._get_persistent()：菜单 logo 这类静态图重启后重传
+# 一次的代价可以接受，没必要跨重载持久化；同时也避免 C++ 扩展属性堆积。
+_url_cache: dict = {}
+
+
+async def upload_image_cached(
+    data: bytes,
+    filename: str,
+    *,
+    cache_key: str,
+    ttl_seconds: int = 23 * 3600,
+) -> dict | None:
+    """带 TTL 缓存的图床上传。
+
+    返回 ``{'url', 'width', 'height', 'expires_at'}`` 或 ``None``。
+
+    - ``cache_key`` 是逻辑标识（如 ``'menu:logo'``），与 data 的 MD5 前缀拼成
+      完整缓存键 → 文件内容变化时自动重传，旧 content_id 条目立即清理（避免
+      字典无限增长）。
+    - 命中且未过期 → 直接返回缓存条目。
+    - 未命中 / 过期 → 调用 ``upload_image()`` 上传；成功则写缓存。
+    - 上传失败但有过期旧缓存 → 仍然返回旧条目（兜底，菜单宁可显示老 URL
+      也不要因瞬时图床故障变成纯文字）。
+    - 没有 ``image_hosting`` 配置 / 全部失败且无旧缓存 → 返回 ``None``。
+    """
+    content_id = hashlib.md5(data).hexdigest()[:12]
+    full_key = f'{cache_key}:{content_id}'
+    now = _time.monotonic()
+
+    entry = _url_cache.get(full_key)
+    if entry is not None and entry['expires_at'] > now:
+        return entry
+
+    url = await upload_image(data, filename)
+    if url:
+        width, height = get_image_size(data)
+        new_entry = {
+            'url': url,
+            'width': width,
+            'height': height,
+            'expires_at': now + ttl_seconds,
+        }
+        # 清理同 cache_key 下其他 content_id 的旧条目（含本次刚过期的那条）
+        prefix = f'{cache_key}:'
+        for k in list(_url_cache.keys()):
+            if k.startswith(prefix) and k != full_key:
+                del _url_cache[k]
+        _url_cache[full_key] = new_entry
+        return new_entry
+
+    # 上传失败：返回过期旧缓存（如有）兜底
+    if entry is not None:
+        log.info(f'图床上传失败，复用过期缓存: {cache_key}')
+        return entry
     return None
