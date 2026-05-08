@@ -81,8 +81,32 @@ else
     [[ -f "$PY_INC/Python.h" ]] || need+=("python3-dev (找不到 Python.h)")
 fi
 
-# Boost.Python（任意命名）
-if ! ldconfig -p 2>/dev/null | grep -qE 'libboost_python(3[0-9]*)?\.so'; then
+# Boost.Python：多重检测，任一通过即认可
+# 单纯用 ldconfig -p 不可靠：apt 装完 dev 包后系统缓存可能没立刻刷新；
+# 不同发行版库文件命名也千差万别（libboost_python3.so / .py310 / -mt 等），
+# 单一正则覆盖不全。这里依次尝试 4 种方法：
+#   1. ldconfig 缓存（最快，但可能过期）
+#   2. 直接扫常见 lib 目录（绕过缓存）
+#   3. dpkg 包级查询（Debian/Ubuntu）
+#   4. rpm 包级查询（CentOS/RHEL/Fedora）
+_have_boost_python() {
+    ldconfig -p 2>/dev/null | grep -qE 'libboost_python[0-9a-z.+-]*\.so' && return 0
+    local d
+    for d in /usr/lib/x86_64-linux-gnu /usr/lib64 /usr/lib /usr/local/lib /usr/local/lib64; do
+        [[ -d "$d" ]] || continue
+        find "$d" -maxdepth 1 -name 'libboost_python*.so*' 2>/dev/null | grep -q . && return 0
+    done
+    if command -v dpkg-query >/dev/null 2>&1; then
+        dpkg-query -W -f='${Package} ${db:Status-Status}\n' 'libboost-python*-dev' 2>/dev/null \
+            | grep -q ' installed$' && return 0
+    fi
+    if command -v rpm >/dev/null 2>&1; then
+        rpm -q --quiet boost-python3-devel 2>/dev/null && return 0
+        rpm -q --quiet boost-python36-devel 2>/dev/null && return 0
+    fi
+    return 1
+}
+if ! _have_boost_python; then
     need+=("libboost-python3-dev")
 fi
 
