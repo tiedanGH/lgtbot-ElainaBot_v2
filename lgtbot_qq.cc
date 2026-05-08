@@ -104,14 +104,16 @@ void HandleMessages(void* handler, const char* const id, const int is_uid,
 
 /**
  * GetUserName — 获取用户显示名
- * 格式：<昵称(uid)>，失败时退化为 <uid>
+ * 格式统一 <%s>：openid 太长不适合 UI 显示，所以不再拼 uid 后缀。
+ * Python 侧 cb_get_user_name 在缓存未命中时已自动返回 uid 作为名字，
+ * 此函数只需把字符串包一层尖括号。Python 抛异常时 fallback 到 <uid>。
  */
 void GetUserName(void* handler, char* const buffer, const size_t size, const char* const uid)
 {
     try {
         AcquireGIL a;
         const std::string name = boost::python::call<std::string>(g_get_user_name, uid);
-        snprintf(buffer, size, "<%s(%s)>", name.c_str(), uid);
+        snprintf(buffer, size, "<%s>", name.c_str());
     } catch (...) {
         std::cerr << "[lgtbot_qq] GetUserName failed: " << uid << std::endl;
         snprintf(buffer, size, "<%s>", uid);
