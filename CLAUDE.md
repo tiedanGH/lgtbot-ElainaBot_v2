@@ -1,6 +1,6 @@
 # Project Conventions for AI Assistants
 
-> 本文件用于约束 Claude 等 AI 助手在本项目（`plugins/lgtbot_qq`）下的协作行为。
+> 本文件用于约束 Claude 等 AI 助手在本项目（`plugins/LGTBot_ElainaBot`）下的协作行为。
 > 任何修改应优先遵守此处约定，与日常对话指令冲突时以本文件为准。
 
 ---
@@ -9,10 +9,10 @@
 
 | 范围                                              | 是否可改                       |
 |-------------------------------------------------|----------------------------|
-| `plugins/lgtbot_qq/` 下所有 Python 文件              | ✅ 可改                       |
-| `plugins/lgtbot_qq/lgtbot_qq.cc`                | ✅ 可改（这是本插件自己的桥接层）          |
-| `plugins/lgtbot_qq/CMakeLists.txt` / `build.sh` | ✅ 可改                       |
-| `plugins/lgtbot_qq/lgtbot/` （子模块）               | ❌ **不可改** —— 上游 C++ 引擎源码   |
+| `plugins/LGTBot_ElainaBot/` 下所有 Python 文件              | ✅ 可改                       |
+| `plugins/LGTBot_ElainaBot/LGTBot_ElainaBot.cc`                | ✅ 可改（这是本插件自己的桥接层）          |
+| `plugins/LGTBot_ElainaBot/CMakeLists.txt` / `build.sh` | ✅ 可改                       |
+| `plugins/LGTBot_ElainaBot/lgtbot/` （子模块）               | ❌ **不可改** —— 上游 C++ 引擎源码   |
 | `core/` / `web/` / `main.py`（项目根）               | ❌ **不可改** —— ElainaBot 主框架 |
 
 如果用户的需求需要改主框架或 lgtbot 子模块，先**显式向用户说明**并征得同意。
@@ -47,7 +47,7 @@ survive hot-reload with active games and improve quota logic
 
 - Detect engine still running on @on_load via persistent attribute on
   the C++ extension module (survives plugin reload). When games are
-  in progress, skip lgtbot_qq.start() ...
+  in progress, skip LGTBot_ElainaBot.start() ...
 - Share mutable state via the same persistent dict ...
 - Replace shared asyncio.Event with per-waiter Events ...
 ```
@@ -58,7 +58,7 @@ survive hot-reload with active games and improve quota logic
 |--------------------------------------------------------|------------------------|--------------------------------------------------|
 | 入口 `main.py`                                           | **无前缀**                | `add @on_unload guard for active games`          |
 | 顶层文档（`README` / `DEPLOY` / `CLAUDE`）                   | **无前缀**                | `update README to reflect data/engine subfolder` |
-| 顶层构建文件（`lgtbot_qq.cc` / `build.sh` / `CMakeLists.txt`） | **无前缀**                | `disable AddressSanitizer in build script`       |
+| 顶层构建文件（`LGTBot_ElainaBot.cc` / `build.sh` / `CMakeLists.txt`） | **无前缀**                | `disable AddressSanitizer in build script`       |
 | `app/` 下任一子模块                                          | **模块文件名（不带路径、不带 .py）** | `quota: fix race in shared Event`                |
 | 多模块 / 跨层混合改动                                           | **无前缀**，按最高层职责描述       | `survive hot-reload with active games`           |
 
@@ -76,7 +76,7 @@ move lgtbot.json into data/engine/ subfolder
 ```
 fix: Preload shared libs                       # 动作前缀 + 大写
 app/quota: fix race                            # 不要带路径
-plugins/lgtbot_qq/app/quota.py: ...            # 更不要带完整路径
+plugins/LGTBot_ElainaBot/app/quota.py: ...            # 更不要带完整路径
 修复 lgtbot.json 位置                            # 中文
 ```
 
@@ -154,10 +154,10 @@ plugins/lgtbot_qq/app/quota.py: ...            # 更不要带完整路径
 ## 5. 跨插件热重载
 
 PluginManager 文件保存触发热重载时：
-- C++ 扩展 `lgtbot_qq` 常驻进程，`sys.modules['lgtbot_qq']` 跨重载保留
-- Python 子模块（`plugins.lgtbot_qq.app.*`）会被销毁重建
+- C++ 扩展 `LGTBot_ElainaBot` 常驻进程，`sys.modules['LGTBot_ElainaBot']` 跨重载保留
+- Python 子模块（`plugins.LGTBot_ElainaBot.app.*`）会被销毁重建
 - 要跨重载共享的可变状态都挂在 C++ 扩展属性上（`boot._get_persistent()`）
-- 检测到引擎已运行 + 有进行中的游戏时，**不要再调 `lgtbot_qq.start()`**（会覆盖 `g_bot_core`，所有活跃 match 失联）
+- 检测到引擎已运行 + 有进行中的游戏时，**不要再调 `LGTBot_ElainaBot.start()`**（会覆盖 `g_bot_core`，所有活跃 match 失联）
 
 任何新增的需要跨重载持久的状态，都要走 `_get_persistent()` 路径。
 
@@ -169,7 +169,7 @@ PluginManager 文件保存触发热重载时：
 
 | 限制                                                           | 应对                                             |
 |--------------------------------------------------------------|------------------------------------------------|
-| 同一 `msg_id` 最多回 5 条（`msg_seq=1..5`）；5 分钟过期                   | 第 4 条起挂「🔄 刷新会话」按钮，第 5 条改「⚠️ 最终刷新」；超量阻塞等待 ≤10s |
+| 同一 `msg_id` 最多回 5 条（`msg_seq=1..5`）；5 分钟过期                   | 第 4 条起挂「🔄 刷新会话」按钮，第 5 条改「⚠️ 最终刷新」；超量阻塞等待 ≤15s |
 | INTERACTION 事件的 `event_id` 独立计 5 条                           | 用户点按钮 → 新 event_id → 又 5 条额度                   |
 | 媒体消息（`msg_type=7`）不解析 `<@openid>`                            | 在 `helpers.humanize_mentions` 中转 `@昵称`         |
 | 媒体消息无法挂按钮（QQ 协议）                                             | 仅文本回复附按钮                                       |
@@ -182,5 +182,5 @@ PluginManager 文件保存触发热重载时：
 
 - 用户说"不能改 X" / "不要做 Y" 后，**整个会话内**保持该约束
 - 改动可能影响生产数据（`data/lgtbot.db` / 已编译 `build/`）时，**先确认**再动
-- 涉及编译重启（修改 `lgtbot_qq.cc` / `CMakeLists.txt`）的改动，明确告诉用户需要 `bash build.sh --clean`
+- 涉及编译重启（修改 `LGTBot_ElainaBot.cc` / `CMakeLists.txt`）的改动，明确告诉用户需要 `bash build.sh --clean`
 - 长篇技术分析可以输出在对话里，但**不要**默默写到代码注释里 —— 注释要简洁可维护

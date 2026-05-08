@@ -15,17 +15,17 @@ log = get_logger(PLUGIN, 'LGTBot')
 
 DEFAULT_CONFIG = {
     'admin_uids': [],
-    'refresh_wait_timeout': 10.0,
+    'refresh_wait_timeout': 15.0,
 }
 CONFIG_COMMENTS = {
     'admin_uids': (
         'LGTBot 内部管理员 openid 列表（不同于 ElainaBot 的 owner_ids）\n'
-        '#   这些用户可执行 LGTBot 管理命令（如 /管理 重置赛季 等）\n'
+        '#   这些用户可执行 LGTBot 管理命令（如 %帮助 等）\n'
         '#   留空则该机器人无 LGTBot 管理员；可在 Web 面板「日志」查 user_id'
     ),
     'refresh_wait_timeout': (
         '被动消息配额（5 条）耗尽时，等待用户点击「刷新」按钮的最长秒数\n'
-        '#   超时后会用旧引用强制尝试发送（QQ 多半会拒绝，但试一下不丢消息）\n'
+        '#   超时后会用旧引用强制尝试发送（多半会被拒绝）\n'
         '#   推荐 5–30 秒：过短玩家来不及点，过长命令响应延迟明显'
     ),
 }
@@ -46,7 +46,7 @@ def _get_ctx():
         if _bot_manager_ref is not None:
             pm = getattr(_bot_manager_ref, 'plugin_manager', None)
             if pm is not None:
-                info = pm.get_plugin('lgtbot_qq') if hasattr(pm, 'get_plugin') else None
+                info = pm.get_plugin('LGTBot_ElainaBot') if hasattr(pm, 'get_plugin') else None
                 if info and getattr(info, 'ctx', None):
                     return info.ctx
     except Exception:
@@ -54,7 +54,7 @@ def _get_ctx():
 
     try:
         from core.plugin.context import PluginContext
-        return PluginContext('lgtbot_qq', boot.PLUGIN_DIR)
+        return PluginContext('LGTBot_ElainaBot', boot.PLUGIN_DIR)
     except Exception as e:
         log.warning(f'构造 PluginContext 失败: {e}')
         return None
@@ -97,7 +97,7 @@ def load_plugin_config() -> str:
 def _apply_runtime_tunables(cfg: dict):
     """把 config.yaml 中的可调字段下发到对应运行时模块"""
     from . import quota
-    timeout = cfg.get('refresh_wait_timeout', 10.0)
+    timeout = cfg.get('refresh_wait_timeout', 15.0)
     try:
         timeout_f = float(timeout)
     except (TypeError, ValueError):

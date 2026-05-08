@@ -45,22 +45,22 @@ if(NOT _BP_FOUND)
 endif()
 
 # ── 编译目标 ──────────────────────────────────────────────────────────────────
-add_library(lgtbot_qq SHARED lgtbot_qq.cc)
+add_library(LGTBot_ElainaBot SHARED LGTBot_ElainaBot.cc)
 
 # 不加 lib 前缀；编译产物直接输出到插件源目录，Python import 时可直接找到
-set_target_properties(lgtbot_qq PROPERTIES
+set_target_properties(LGTBot_ElainaBot PROPERTIES
     PREFIX ""
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"   # Windows .dll
 )
 
-target_include_directories(lgtbot_qq PRIVATE
+target_include_directories(LGTBot_ElainaBot PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/lgtbot"
     ${Python3_INCLUDE_DIRS}
     ${Boost_INCLUDE_DIRS}
 )
 
-target_link_libraries(lgtbot_qq PRIVATE
+target_link_libraries(LGTBot_ElainaBot PRIVATE
     bot_core
     ${Python3_LIBRARIES}
     ${Boost_LIBRARIES}
@@ -70,17 +70,17 @@ target_link_libraries(lgtbot_qq PRIVATE
 # gflags（LGTBot 内部使用，可选）
 find_package(gflags QUIET)
 if(gflags_FOUND)
-    target_link_libraries(lgtbot_qq PRIVATE gflags)
+    target_link_libraries(LGTBot_ElainaBot PRIVATE gflags)
 else()
     # 尝试直接链接，部分系统没有 find_package 但库存在
-    target_link_libraries(lgtbot_qq PRIVATE -lgflags)
+    target_link_libraries(LGTBot_ElainaBot PRIVATE -lgflags)
 endif()
 
 # pthread（Linux GCC/Clang）
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_link_libraries(lgtbot_qq PRIVATE pthread)
+    target_link_libraries(LGTBot_ElainaBot PRIVATE pthread)
 endif()
 
-add_dependencies(lgtbot_qq bot_core)
+add_dependencies(LGTBot_ElainaBot bot_core)
 
-message(STATUS "编译完成后 lgtbot_qq.so 将输出至: ${CMAKE_CURRENT_SOURCE_DIR}")
+message(STATUS "编译完成后 LGTBot_ElainaBot.so 将输出至: ${CMAKE_CURRENT_SOURCE_DIR}")

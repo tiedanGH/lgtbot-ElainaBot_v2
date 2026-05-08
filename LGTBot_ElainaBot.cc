@@ -1,11 +1,11 @@
 /*
- * lgtbot_qq.cc — LGTBot × ElainaBot (QQ Official Bot) 桥接层
+ * LGTBot_ElainaBot.cc — LGTBot × ElainaBot (QQ Official Bot) 桥接层
  *
  * 将 LGTBot C++ 引擎通过 Boost.Python 暴露给 Python，
  * Python 侧由 ElainaBot 插件系统提供消息收发能力。
  *
  * 与 lgtbot_kook.cc 的主要差异：
- *   1. Boost.Python 模块名改为 lgtbot_qq
+ *   1. Boost.Python 模块名改为 LGTBot_ElainaBot
  *   2. 用户 Mention 格式：Kook (met)uid(met) → QQ Markdown <@uid>
  */
 
@@ -98,7 +98,7 @@ void HandleMessages(void* handler, const char* const id, const int is_uid,
             }
         }
     } catch (...) {
-        std::cerr << "[lgtbot_qq] HandleMessages dispatch failed" << std::endl;
+        std::cerr << "[LGTBot_ElainaBot] HandleMessages dispatch failed" << std::endl;
     }
 }
 
@@ -127,7 +127,7 @@ void GetUserName(void* handler, char* const buffer, const size_t size, const cha
         }
         snprintf(buffer, size, "<%s(%s)>", name.c_str(), short_uid.c_str());
     } catch (...) {
-        std::cerr << "[lgtbot_qq] GetUserName failed: " << uid << std::endl;
+        std::cerr << "[LGTBot_ElainaBot] GetUserName failed: " << uid << std::endl;
         snprintf(buffer, size, "<%s>", uid);
     }
 }
@@ -154,7 +154,7 @@ int DownloadUserAvatar(void* handler, const char* const uid, const char* const d
         AcquireGIL a;
         url = boost::python::call<std::string>(g_get_user_avatar_url, uid);
     } catch (...) {
-        std::cerr << "[lgtbot_qq] DownloadUserAvatar get_url failed, uid=" << uid << std::endl;
+        std::cerr << "[LGTBot_ElainaBot] DownloadUserAvatar get_url failed, uid=" << uid << std::endl;
         return false;
     }
     if (url.empty()) {
@@ -164,7 +164,7 @@ int DownloadUserAvatar(void* handler, const char* const uid, const char* const d
 
     CURL* const curl = curl_easy_init();
     if (!curl) {
-        std::cerr << "[lgtbot_qq] curl_easy_init() failed" << std::endl;
+        std::cerr << "[LGTBot_ElainaBot] curl_easy_init() failed" << std::endl;
         return false;
     }
     FILE* const fp = fopen(dest_filename, "wb");
@@ -179,7 +179,7 @@ int DownloadUserAvatar(void* handler, const char* const uid, const char* const d
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
     const CURLcode res = curl_easy_perform(curl);
     if (res != CURLE_OK) {
-        std::cerr << "[lgtbot_qq] avatar download failed: " << curl_easy_strerror(res) << std::endl;
+        std::cerr << "[LGTBot_ElainaBot] avatar download failed: " << curl_easy_strerror(res) << std::endl;
     }
     curl_easy_cleanup(curl);
     fclose(fp);
@@ -226,7 +226,7 @@ bool Start(
     const char* errmsg = nullptr;
     g_bot_core = LGTBot_Create(&option, &errmsg);
     if (!g_bot_core) {
-        std::cerr << "[lgtbot_qq] Init failed: " << (errmsg ? errmsg : "unknown") << std::endl;
+        std::cerr << "[LGTBot_ElainaBot] Init failed: " << (errmsg ? errmsg : "unknown") << std::endl;
         return false;
     }
     return true;
@@ -251,7 +251,7 @@ bool ReleaseBotIfNoProcessingGames()
 }
 
 // ──── Boost.Python 模块注册 ───────────────────────────────────────────────
-BOOST_PYTHON_MODULE(lgtbot_qq)
+BOOST_PYTHON_MODULE(LGTBot_ElainaBot)
 {
     namespace python = boost::python;
     python::def("start",                          Start);

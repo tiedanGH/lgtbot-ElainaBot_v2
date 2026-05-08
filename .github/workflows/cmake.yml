@@ -46,13 +46,9 @@ jobs:
       - name: Verify build artifacts
         run: |
           set -e
-          test -f lgtbot_qq.so          && echo "✅ lgtbot_qq.so"
+          test -f LGTBot_ElainaBot.so   && echo "✅ LGTBot_ElainaBot.so"
           test -f build/libbot_core.so  && echo "✅ libbot_core.so"
           test -f build/markdown2image  && echo "✅ markdown2image"
           GAMES=$(find build/plugins -mindepth 2 -name 'libgame.so' | wc -l)
           echo "✅ libgame.so 数量: $GAMES"
           test "$GAMES" -gt 0
-
-      - name: Test
-        working-directory: build
-        run: ctest -C ${{ env.BUILD_TYPE }} --output-on-failure

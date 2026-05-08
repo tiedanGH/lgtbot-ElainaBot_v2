@@ -84,13 +84,13 @@ async def lgtbot_dispatch(event, match):
     try:
         if event.is_group and gid:
             threading.Thread(
-                target=boot.lgtbot_qq.on_public_message,
+                target=boot.LGTBot_ElainaBot.on_public_message,
                 args=(content, uid, gid),
                 daemon=True,
             ).start()
         elif event.is_direct and uid:
             threading.Thread(
-                target=boot.lgtbot_qq.on_private_message,
+                target=boot.LGTBot_ElainaBot.on_private_message,
                 args=(content, uid),
                 daemon=True,
             ).start()

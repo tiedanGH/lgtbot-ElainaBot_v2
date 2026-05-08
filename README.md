@@ -48,15 +48,15 @@
 ## 工作原理
 
 ```
-┌─────────────────────┐    @handler                ┌────────────────────────┐
-│ ElainaBot 主框架    │ ──────────────────────►    │ plugins/lgtbot_qq/     │
-│  (QQ Webhook / WS)  │                            │  main.py               │
-│  MessageSender      │ ◄──── send_to_xxx ──────── │   ↓ Boost.Python       │
-└─────────────────────┘     run_coroutine_         │  lgtbot_qq.so          │
-                            threadsafe             │   ↓ FFI                │
-                                                   │  libbot_core (C++)     │
-                                                   │  + 50+ games           │
-                                                   └────────────────────────┘
+┌─────────────────────┐    @handler               ┌──────────────────────────────┐
+│ ElainaBot 主框架    │ ─────────────────────►    │ plugins/LGTBot_ElainaBot/    │
+│  (QQ Webhook / WS)  │                           │  main.py                     │
+│  MessageSender      │ ◄──── send_to_xxx ─────── │   ↓ Boost.Python             │
+└─────────────────────┘     run_coroutine_        │  LGTBot_ElainaBot.so         │
+                            threadsafe            │   ↓ FFI                      │
+                                                  │  libbot_core (C++)           │
+                                                  │  + 50+ games                 │
+                                                  └──────────────────────────────┘
 ```
 
 ## 快速开始
@@ -65,7 +65,7 @@
 
 ```bash
 # 1. 准备 lgtbot 子模块
-cd plugins/lgtbot_qq
+cd plugins/LGTBot_ElainaBot
 git clone --recursive https://github.com/Slontia/lgtbot.git lgtbot
 
 # 2. 一键编译
@@ -79,7 +79,7 @@ cd ../.. && python3 main.py
 
 | 能力              | 实现                                                                                                      |
 |-----------------|---------------------------------------------------------------------------------------------------------|
-| **零配置自动加载**     | 作为 ElainaBot 插件，路径全部自包含在 `plugins/lgtbot_qq/`                                                           |
+| **零配置自动加载**     | 作为 ElainaBot 插件，路径全部自包含在 `plugins/LGTBot_ElainaBot/`                                                    |
 | **消息合并**        | C++ 端聚合 "@玩家 文本 + 图片" 到单条媒体消息（避免 QQ 端拆成两条）                                                              |
 | **markdown 图床** | 图片优先上传到 image_hosting (COS / B站) 拿 URL 后用 markdown 内嵌，保留 `<@>` 原生 mention 和按钮；图床未启用 / 上传失败回退 msg_type=7 |
 | **玩家头像**        | 利用 `q.qlogo.cn/qqapp/{appid}/{openid}` 直链，LGTBot 渲染头像无需额外接口                                             |
@@ -104,9 +104,9 @@ QQ 官方机器人协议层面的限制，**所有 QQ Bot 都会遇到**，与 L
 ## 文件结构
 
 ```
-plugins/lgtbot_qq/
-├── main.py                  ElainaBot 插件入口（精简，仅元数据 + 生命周期）
-├── lgtbot_qq.cc             C++ ↔ Python 桥接层（Boost.Python 模块）
+plugins/LGTBot_ElainaBot/
+├── main.py                  ElainaBot 插件入口（元数据 + 生命周期）
+├── LGTBot_ElainaBot.cc      C++ ↔ Python 桥接层（Boost.Python 模块）
 ├── CMakeLists.txt           构建配置（自动探测 Python / Boost.Python 版本）
 ├── build.sh                 一键编译脚本（依赖自检 + 多种编译选项）
 ├── CLAUDE.md                AI 协作约定
@@ -114,7 +114,7 @@ plugins/lgtbot_qq/
 ├── README.md                本文档
 ├── LICENSE                  LGPLv2 许可证
 │
-├── app/                     插件功能模块（按职责拆分）
+├── app/                     插件功能模块
 │   ├── __init__.py
 │   ├── state.py             共享运行时状态容器（含跨重载持久化）
 │   ├── boot.py              C++ 扩展加载（chdir + lib*.so 预加载 + RTLD_GLOBAL）
@@ -133,16 +133,16 @@ plugins/lgtbot_qq/
 │
 ├── lgtbot/                  ⬇ git submodule（LGTBot 上游源码）
 │
-├── build/                   ⚙️ CMake 编译产物（gitignored，运行时不可删）
+├── build/                   ⚙️ CMake 编译产物（运行时不可删）
 │   ├── libbot_core.so       引擎核心库（运行时由 boot.py 用 ctypes 预加载）
 │   ├── markdown2image       游戏图片渲染器
 │   └── plugins/<game>/libgame.so   各游戏插件
 │
-└── data/                    🗂 运行时数据（gitignored，自动创建）
+└── data/                    🗂 运行时数据（自动创建）
     ├── config.yaml          插件配置（Web UI 可在线编辑）
     ├── lgtbot.db            SQLite（用户 / 对局 / 排行榜）
-    ├── images/              引擎临时渲染图片
-    └── engine/              引擎内部文件（Web UI 不可见，避免污染配置入口）
+    ├── images/              引擎临时渲染图片（可清理）
+    └── engine/              引擎内部文件
         └── lgtbot.json      LGTBot 引擎全局选项（首次启动写入空 JSON）
 ```
 

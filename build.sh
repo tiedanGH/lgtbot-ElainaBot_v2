@@ -3,7 +3,7 @@
 # LGTBot × ElainaBot 一键编译脚本 (Linux)
 #
 # 用法：
-#   cd plugins/lgtbot_qq
+#   cd plugins/LGTBot_ElainaBot
 #   bash build.sh                 # 标准编译（无测试）
 #   bash build.sh --test          # 带 LGTBot 测试模式编译 (-DWITH_TEST=ON)
 #   bash build.sh --clean         # 清理后重编译
@@ -14,7 +14,7 @@
 #   bash build.sh --no-glog       # 关闭 glog 日志 (默认 ON)
 #   bash build.sh --no-games      # 不编译内置游戏插件 (默认 ON)
 #
-# 产物：plugins/lgtbot_qq/lgtbot_qq.so （ElainaBot 主框架启动时自动加载）
+# 产物：plugins/LGTBot_ElainaBot/LGTBot_ElainaBot.so （ElainaBot 主框架启动时自动加载）
 # -----------------------------------------------------------------------------
 set -euo pipefail
 
@@ -156,17 +156,17 @@ echo "── 编译 (-j $JOBS) ────"
 cmake --build build -j "$JOBS"
 
 # ── 验证产物 ─────────────────────────────────────────────────────────────
-SO_PATH="$SCRIPT_DIR/lgtbot_qq.so"
+SO_PATH="$SCRIPT_DIR/LGTBot_ElainaBot.so"
 if [[ ! -f "$SO_PATH" ]]; then
     # 部分 CMake 版本不遵守 LIBRARY_OUTPUT_DIRECTORY，到 build/ 找
-    FOUND=$(find build -name 'lgtbot_qq.so' -print -quit || true)
+    FOUND=$(find build -name 'LGTBot_ElainaBot.so' -print -quit || true)
     if [[ -n "$FOUND" ]]; then
         cp "$FOUND" "$SO_PATH"
     fi
 fi
 
 if [[ ! -f "$SO_PATH" ]]; then
-    echo "[!] 编译完成但未找到 lgtbot_qq.so"
+    echo "[!] 编译完成但未找到 LGTBot_ElainaBot.so"
     exit 1
 fi
 

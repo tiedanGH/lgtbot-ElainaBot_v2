@@ -73,7 +73,7 @@ def _append(entry: dict):
 
 
 def get_logs() -> list:
-    """快照当前所有日志（线程安全）"""
+    """快照当前所有日志"""
     with _lock:
         return list(_logs)
 
@@ -406,7 +406,7 @@ def register():
         'key': PAGE_KEY,
         'label': 'LGTBot 机器人',
         'source': 'plugin',
-        'source_name': 'lgtbot_qq',
+        'source_name': 'LGTBot_ElainaBot',
         'html': '',          # 占位，会被 _LazyHtmlDict 覆盖
         'html_file': '',
         'icon': '',

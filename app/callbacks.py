@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""C++ 引擎回调实现（由 lgtbot_qq.so 调用，运行在 C++ 工作线程）
+"""C++ 引擎回调实现（由 LGTBot_ElainaBot.so 调用，运行在 C++ 工作线程）
 
 入口函数（同步）：
   · cb_get_user_name(uid)            返回昵称

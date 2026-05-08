@@ -11,7 +11,7 @@ QQ 协议事实：
 本模块策略：
   · 第 4 条及以后的文本消息自动追加「🔄 刷新」按钮（type=1 callback）
   · 用户点击 → ACK + 立即刷新引用 + 唤醒可能在等待的发送协程
-  · 发送时若配额满，最长等待 10s 等待新刷新事件再重试
+  · 发送时若配额满，最长等待 15s 等待新刷新事件再重试
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ log = get_logger(PLUGIN, 'LGTBot')
 REF_TTL = 290.0                  # 引用 TTL（5min - 10s 余量）
 REF_QUOTA = 5                    # QQ 协议每引用 5 条
 REFRESH_BUTTON_THRESHOLD = 4     # 第 N 条起追加刷新按钮（含第 4 / 第 5 条）
-REFRESH_WAIT_TIMEOUT = 10.0      # 配额耗尽时等待刷新的最长秒数
+REFRESH_WAIT_TIMEOUT = 15.0      # 配额耗尽时等待刷新的最长秒数（可在 config.yaml 覆盖）
 RELAY_BUTTON_DATA = '__lgt_relay__'
 
 # ──────── 内部状态 ────────────────────────────────────────────────────────

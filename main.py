@@ -15,7 +15,7 @@
 __plugin_meta__ = {
     'name': 'LGTBot 机器人',
     'author': '铁蛋',
-    'description': '基于 LGTBot C++ 引擎的游戏裁判机器人：提供多人桌游、竞技对战与自动裁判功能，让聊天室化身轻量级游戏竞技平台',
+    'description': '基于 LGTBot C++ 引擎的游戏裁判机器人',
     'version': '1.0.0',
     'github': 'https://github.com/tiedanGH/lgtbot-ElainaBot_v2',
 }
@@ -34,17 +34,17 @@ from core.base.logger import get_logger, PLUGIN
 #   3. _ctx_mod.ctx = None         ← reset
 #   4. 调用 @on_load 函数（此时 ctx 已是 None）
 # 所以必须在模块顶层捕获，不能延迟到 @on_load 内
-from plugins.lgtbot_qq.app import state as _state
+from plugins.LGTBot_ElainaBot.app import state as _state
 _state.plugin_ctx = _ctx_mod.ctx
 
 # ──────── 触发各子模块加载 ────────────────────────────────────────────────
 # 顺序敏感：boot 必须最先（处理 C++ 扩展导入 + chdir + RTLD_GLOBAL 副作用），
-# 其他模块依赖 boot.lgtbot_qq / boot.BUILD_DIR / boot.LGTBOT_AVAILABLE 等
-from plugins.lgtbot_qq.app import boot              # noqa: F401  C++ 引擎与路径
-from plugins.lgtbot_qq.app.webui import message_log # noqa: F401  Web 面板侧边栏页面
-from plugins.lgtbot_qq.app import dispatcher        # noqa: F401  @handler 注册（消息派发 + INTERACTION）
-from plugins.lgtbot_qq.app import callbacks         # C++ 回调（被 lgtbot_qq.start 注入）
-from plugins.lgtbot_qq.app import config as _config
+# 其他模块依赖 boot.LGTBot_ElainaBot / boot.BUILD_DIR / boot.LGTBOT_AVAILABLE 等
+from plugins.LGTBot_ElainaBot.app import boot              # noqa: F401  C++ 引擎与路径
+from plugins.LGTBot_ElainaBot.app.webui import message_log # noqa: F401  Web 面板侧边栏页面
+from plugins.LGTBot_ElainaBot.app import dispatcher        # noqa: F401  @handler 注册（消息派发 + INTERACTION）
+from plugins.LGTBot_ElainaBot.app import callbacks         # C++ 回调（被 LGTBot_ElainaBot.start 注入）
+from plugins.LGTBot_ElainaBot.app import config as _config
 
 log = get_logger(PLUGIN, 'LGTBot')
 
@@ -61,8 +61,8 @@ async def _setup():
 
     if not boot.LGTBOT_AVAILABLE:
         log.error('=' * 60)
-        log.error(f'lgtbot_qq C++ 扩展未编译或导入失败：{boot.IMPORT_ERROR}')
-        log.error('请先按 plugins/lgtbot_qq/DEPLOY.md 编译后再启动')
+        log.error(f'LGTBot_ElainaBot C++ 扩展未编译或导入失败：{boot.IMPORT_ERROR}')
+        log.error('请先按 plugins/LGTBot_ElainaBot/DEPLOY.md 编译后再启动')
         log.error('=' * 60)
         return
 
@@ -70,12 +70,12 @@ async def _setup():
     _state.event_loop = asyncio.get_running_loop()
 
     # ── 热重载检测：上一轮的引擎可能还活着 ─────────────────────────────────
-    # 若此时再调 lgtbot_qq.start()，C++ 会覆盖 g_bot_core，旧引擎实例被丢弃，
+    # 若此时再调 LGTBot_ElainaBot.start()，C++ 会覆盖 g_bot_core，旧引擎实例被丢弃，
     # 进行中的游戏全部失联（玩家命令进入新引擎找不到 match）。
     # 解决：检测到引擎已在运行时，先尝试干净释放；释放失败（有游戏在跑）则
     # 跳过 start()，复用现有引擎，让玩家可以继续游戏。
     if boot.is_engine_running():
-        if boot.lgtbot_qq.release_bot_if_not_processing_games():
+        if boot.LGTBot_ElainaBot.release_bot_if_not_processing_games():
             boot.mark_engine_running(False)
             log.info('🔁 [热重载] 旧引擎已干净释放，将重新初始化')
         else:
@@ -92,7 +92,7 @@ async def _setup():
     if not os.path.isdir(boot.GAME_PATH):
         log.error('=' * 60)
         log.error(f'游戏插件目录不存在: {boot.GAME_PATH}')
-        log.error('请先在 plugins/lgtbot_qq/ 下执行 bash build.sh 完成编译')
+        log.error('请先在 plugins/LGTBot_ElainaBot/ 下执行 bash build.sh 完成编译')
         log.error('=' * 60)
         return
     game_count = sum(
@@ -107,7 +107,7 @@ async def _setup():
         return
 
     log.info(f'初始化 LGTBot 引擎: 游戏数={game_count}, db={boot.DB_PATH}, conf={boot.CONF_PATH}')
-    ok = boot.lgtbot_qq.start(
+    ok = boot.LGTBot_ElainaBot.start(
         boot.GAME_PATH, boot.DB_PATH, boot.CONF_PATH, boot.IMG_PATH, admins,
         callbacks.cb_get_user_name, callbacks.cb_get_user_avatar_url,
         callbacks.cb_send_text_message, callbacks.cb_send_image_message,
@@ -131,7 +131,7 @@ async def _teardown():
 
     if not _state.started or not boot.LGTBOT_AVAILABLE:
         return
-    if boot.lgtbot_qq.release_bot_if_not_processing_games():
+    if boot.LGTBot_ElainaBot.release_bot_if_not_processing_games():
         _state.started = False
         boot.mark_engine_running(False)
         log.info('LGTBot 引擎已安全关闭')

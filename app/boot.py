@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 """C++ 扩展导入 + 路径常量
 
-import 副作用顺序敏感，需要在所有依赖 lgtbot_qq C++ 扩展的子模块之前加载：
+import 副作用顺序敏感，需要在所有依赖 LGTBot_ElainaBot C++ 扩展的子模块之前加载：
 
-  1. 把插件目录加入 sys.path，让 `import lgtbot_qq` 能找到 .so
+  1. 把插件目录加入 sys.path，让 `import LGTBot_ElainaBot` 能找到 .so
   2. 临时 chdir 到 build/，让 libbot_core.so 加载时静态初始化的
      `k_markdown2image_path = current_path() / "markdown2image"` 捕获到正确路径
   3. 设置 RTLD_GLOBAL 标志，使 libbot_core.so 静态依赖的 glog/gflags 等符号
@@ -19,7 +19,7 @@ import ctypes
 import glob
 
 # ──────── 路径常量 ────────────────────────────────────────────────────────
-# __file__ → plugins/lgtbot_qq/app/boot.py  → 插件根目录是其上一级的上一级
+# __file__ → plugins/LGTBot_ElainaBot/app/boot.py  → 插件根目录是其上一级的上一级
 PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BUILD_DIR  = os.path.join(PLUGIN_DIR, 'build')
 DATA_DIR   = os.path.join(PLUGIN_DIR, 'data')
@@ -51,7 +51,7 @@ def _ensure_lgtbot_conf():
 
 _ensure_lgtbot_conf()
 
-# 让 `import lgtbot_qq` 能找到同目录下的 .so / .pyd
+# 让 `import LGTBot_ElainaBot` 能找到同目录下的 .so / .pyd
 if PLUGIN_DIR not in sys.path:
     sys.path.insert(0, PLUGIN_DIR)
 
@@ -59,7 +59,7 @@ if PLUGIN_DIR not in sys.path:
 # ──────── C++ 扩展加载 ────────────────────────────────────────────────────
 LGTBOT_AVAILABLE = False
 IMPORT_ERROR = ''
-lgtbot_qq = None  # 模块对象，导入成功后赋值
+LGTBot_ElainaBot = None  # 模块对象，导入成功后赋值
 
 _old_cwd = os.getcwd()
 _chdir_ok = os.path.isdir(BUILD_DIR)
@@ -68,10 +68,10 @@ if _chdir_ok:
 
 
 # ──────── 预加载本地共享库 ────────────────────────────────────────────────
-# lgtbot_qq.so 链接 libbot_core.so（位于 build/），但 ld.so 默认不搜
+# LGTBot_ElainaBot.so 链接 libbot_core.so（位于 build/），但 ld.so 默认不搜
 # build/，rpath 缺失时会报 "cannot open shared object file"。
 # 用 ctypes.CDLL 显式按绝对路径预加载所有 build/lib*.so，配合 RTLD_GLOBAL
-# 让符号进全局符号表，后续 lgtbot_qq.so 通过 dlopen 加载时直接命中。
+# 让符号进全局符号表，后续 LGTBot_ElainaBot.so 通过 dlopen 加载时直接命中。
 if _chdir_ok:
     _libs = sorted(glob.glob(os.path.join(BUILD_DIR, 'lib*.so')))
     # 两趟：A 依赖 B 时第一趟 A 失败、第二趟 B 已就位则 A 成功
@@ -85,7 +85,7 @@ if _chdir_ok:
 
 # ──────── 跨插件热重载持久化容器 ──────────────────────────────────────────
 # 插件热重载时，PluginManager 会把本插件的 Python 模块从 sys.modules 移除并
-# 重新 import；但 C++ 扩展 `lgtbot_qq` 一旦被 dlopen 就常驻进程内，sys.modules
+# 重新 import；但 C++ 扩展 `LGTBot_ElainaBot` 一旦被 dlopen 就常驻进程内，sys.modules
 # 也保留缓存。利用这一点，把所有需要跨重载共享的可变容器挂到扩展模块对象上：
 #
 #   user_cache       - 用户昵称/头像缓存
@@ -105,7 +105,7 @@ def _get_persistent() -> dict:
     第一次插件加载：扩展模块上没有 _elaina_persistent → 创建新 dict
     后续热重载：直接复用已有的 dict（旧字典里的所有 key/value 仍可访问）
     """
-    if lgtbot_qq is None:
+    if LGTBot_ElainaBot is None:
         # 扩展未编译：返回一次性的 fallback dict（不会跨重载共享，但避免 None）
         return {
             'user_cache': {},
@@ -113,7 +113,7 @@ def _get_persistent() -> dict:
             'active_ref': {},
             'ref_waiters': {},
         }
-    p = getattr(lgtbot_qq, _PERSIST_ATTR, None)
+    p = getattr(LGTBot_ElainaBot, _PERSIST_ATTR, None)
     if p is None:
         p = {
             'user_cache': {},
@@ -122,7 +122,7 @@ def _get_persistent() -> dict:
             'ref_waiters': {},
         }
         try:
-            setattr(lgtbot_qq, _PERSIST_ATTR, p)
+            setattr(LGTBot_ElainaBot, _PERSIST_ATTR, p)
         except Exception:
             pass
     return p
@@ -130,16 +130,16 @@ def _get_persistent() -> dict:
 
 def is_engine_running() -> bool:
     """LGTBot C++ 引擎在上次 / 本次 plugin load 中已成功 start 且未释放？"""
-    if lgtbot_qq is None:
+    if LGTBot_ElainaBot is None:
         return False
-    return bool(getattr(lgtbot_qq, _ENGINE_RUNNING_ATTR, False))
+    return bool(getattr(LGTBot_ElainaBot, _ENGINE_RUNNING_ATTR, False))
 
 
 def mark_engine_running(running: bool):
     """记录引擎运行状态到扩展模块属性（跨重载持久）"""
-    if lgtbot_qq is not None:
+    if LGTBot_ElainaBot is not None:
         try:
-            setattr(lgtbot_qq, _ENGINE_RUNNING_ATTR, bool(running))
+            setattr(LGTBot_ElainaBot, _ENGINE_RUNNING_ATTR, bool(running))
         except Exception:
             pass
 
@@ -148,8 +148,8 @@ if hasattr(sys, 'setdlopenflags') and hasattr(os, 'RTLD_GLOBAL'):
     _old_flags = sys.getdlopenflags()
     sys.setdlopenflags(os.RTLD_NOW | os.RTLD_GLOBAL)
     try:
-        import lgtbot_qq as _lib  # noqa: F401
-        lgtbot_qq = _lib
+        import LGTBot_ElainaBot as _lib  # noqa: F401
+        LGTBot_ElainaBot = _lib
         LGTBOT_AVAILABLE = True
     except ImportError as e:
         IMPORT_ERROR = str(e)
@@ -157,8 +157,8 @@ if hasattr(sys, 'setdlopenflags') and hasattr(os, 'RTLD_GLOBAL'):
         sys.setdlopenflags(_old_flags)
 else:
     try:
-        import lgtbot_qq as _lib
-        lgtbot_qq = _lib
+        import LGTBot_ElainaBot as _lib
+        LGTBot_ElainaBot = _lib
         LGTBOT_AVAILABLE = True
     except ImportError as e:
         IMPORT_ERROR = str(e)
