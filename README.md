@@ -130,10 +130,10 @@ plugins/LGTBot_ElainaBot/
 │       ├── __init__.py
 │       └── message_log.py   消息日志页（日志缓冲 + HTML 模板 + 懒渲染注册）
 │
-├── .github/workflows/cmake.yml   GitHub Actions CI（Ubuntu 编译 + ctest）
-│
 ├── images/                  仓库内置静态资源
-│   └── logo_transparent_colorful.png   欢迎菜单顶部 logo（删除则用文字标题）
+│   └── logo_transparent_colorful.png   欢迎菜单顶部 logo
+│
+├── .github/workflows/cmake.yml   GitHub Actions CI（Ubuntu 编译 + ctest）
 │
 ├── lgtbot/                  ⬇ git submodule（LGTBot 上游源码）
 │

@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""LGTBot × ElainaBot 集成插件 (QQ Official Bot) —— 入口文件
+"""
+LGTBot × ElainaBot 集成插件 (QQ Official Bot) —— 入口文件
 
 各功能拆分到 app/ 子模块（详见 app/__init__.py），本文件只负责：
 
@@ -15,9 +16,9 @@
 __plugin_meta__ = {
     'name': 'LGTBot 机器人',
     'author': '铁蛋',
-    'description': '基于 LGTBot C++ 引擎的游戏裁判机器人',
+    'description': '基于 C++ 的 LGTBot 游戏裁判机器人',
     'version': '1.1.0',
-    'github': 'https://github.com/tiedanGH/lgtbot-ElainaBot_v2',
+    'github': 'https://github.com/tiedanGH/LGTBot_ElainaBot',
 }
 
 import os

@@ -91,7 +91,7 @@ python3 main.py         # 启动主框架，自动加载插件
 启动应看到类似日志：
 ```
 [插件:LGTBot] LGTBot 管理员配置：1 人
-[插件:LGTBot] 初始化 LGTBot 引擎: db=plugins/LGTBot_ElainaBot/data/lgtbot.db
+[插件:LGTBot] 初始化 LGTBot 引擎: 游戏数=52, db=plugins/LGTBot_ElainaBot/data/lgtbot.db, conf=plugins/LGTBot_ElainaBot/data/engine/lgtbot.json
 [插件:LGTBot] ✅ LGTBot 引擎已就绪
 [插件:LGTBot_ElainaBot] 大型插件加载完成 (1 个处理器, 0.12s)
 ```
@@ -106,10 +106,10 @@ python3 main.py         # 启动主框架，自动加载插件
 
 ```yaml
 # LGTBot 内部管理员 openid 列表（不同于 ElainaBot 的 owner_ids）
-#   这些用户可执行 LGTBot 管理命令（如 /管理 重置赛季 等）
+#   这些用户可执行 LGTBot 管理命令（如 %帮助 等）
 #   留空则该机器人无 LGTBot 管理员；可在 Web 面板「日志」查 user_id
 admin_uids: []
-# 被动消息配额（5 条）耗尽时，等待用户点击「刷新」按钮的最长秒数
+# 被动消息配额（5条）耗尽时，等待用户点击「刷新」按钮的最长秒数
 #   超时后会用旧引用强制尝试发送（多半会失败）
 #   推荐 5–30 秒：过短玩家来不及点，过长命令响应延迟明显
 refresh_wait_timeout: 15.0
@@ -168,13 +168,13 @@ rm -rf plugins/LGTBot_ElainaBot
 
 ## 7. 故障排查
 
-| 现象                                                                 | 排查                                                                                                                                                                                                                                                                                                              |
-|--------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `LGTBot_ElainaBot C++ 扩展未编译或导入失败`                                         | 重跑 `bash build.sh`；查看 `plugins/LGTBot_ElainaBot/LGTBot_ElainaBot.so` 是否存在                                                                                                                                                                                                                                                     |
-| `libbot_core.so: cannot open shared object file`                   | `LGTBot_ElainaBot.so` 链接 `libbot_core.so` 但 ld.so 默认不搜 `build/`。本插件已用 `ctypes.CDLL` 在 import 阶段预加载 `build/lib*.so`；若仍报错，确认 `build/libbot_core.so` 存在，或手动 `LD_LIBRARY_PATH=plugins/LGTBot_ElainaBot/build python3 main.py`                                                                                                     |
-| `ImportError: undefined symbol: ...boost::python...`               | Boost.Python 与编译时的 Python 版本不匹配 — `bash build.sh --clean` 重编译                                                                                                                                                                                                                                                   |
-| `Load mod failed: ... undefined symbol: _ZN6google10LogMessage...` | glog 符号不可见。本插件已在 `main.py` 用 `RTLD_GLOBAL` 解决；若仍出现，确认未 `--no-glog` 编译，或试 `LD_PRELOAD=$(ldconfig -p \| grep libglog \| awk '{print $4}' \| head -1) python3 main.py`                                                                                                                                             |
+| 现象                                                                 | 排查                                                                                                                                                                                                                                                                                                                     |
+|--------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `LGTBot_ElainaBot C++ 扩展未编译或导入失败`                                  | 重跑 `bash build.sh`；查看 `plugins/LGTBot_ElainaBot/LGTBot_ElainaBot.so` 是否存在                                                                                                                                                                                                                                              |
+| `libbot_core.so: cannot open shared object file`                   | `LGTBot_ElainaBot.so` 链接 `libbot_core.so` 但 ld.so 默认不搜 `build/`。本插件已用 `ctypes.CDLL` 在 import 阶段预加载 `build/lib*.so`；若仍报错，确认 `build/libbot_core.so` 存在，或手动 `LD_LIBRARY_PATH=plugins/LGTBot_ElainaBot/build python3 main.py`                                                                                              |
+| `ImportError: undefined symbol: ...boost::python...`               | Boost.Python 与编译时的 Python 版本不匹配 — `bash build.sh --clean` 重编译                                                                                                                                                                                                                                                          |
+| `Load mod failed: ... undefined symbol: _ZN6google10LogMessage...` | glog 符号不可见。本插件已在 `main.py` 用 `RTLD_GLOBAL` 解决；若仍出现，确认未 `--no-glog` 编译，或试 `LD_PRELOAD=$(ldconfig -p \| grep libglog \| awk '{print $4}' \| head -1) python3 main.py`                                                                                                                                                    |
 | `图片渲染失败 (markdown2image 调用未生成文件)` 或 `markdown2image 二进制缺失`         | 本插件在 `import` 时会切到 `build/` 目录让 LGTBot 找到 `markdown2image`。若仍报错：① 检查 `plugins/LGTBot_ElainaBot/build/markdown2image` 是否存在并可执行（`chmod +x`）；② 手动测试 `cd build && echo '# hi' \| ./markdown2image --output /tmp/x.png --width 400 --nowith_css --noprint_info`；③ 部分游戏依赖字体，需 `apt install fonts-noto-cjk`。不影响游戏核心运行，仅影响图片输出 |
-| `LGTBot 引擎启动失败`                                                    | 查 `build/plugins/` 下是否有各 `libgame.so`；首次编译需要等待所有 game 子项编译完成                                                                                                                                                                                                                                                    |
-| 消息发不出去 / 无响应                                                       | 检查主框架日志中 sender 是否成功初始化；QQ Bot `appid/secret` 是否正确                                                                                                                                                                                                                                                              |
-| 段错误 / `Segmentation fault (core dumped)`                           | 通常是 ASAN 编译产物未通过 LD_PRELOAD 启动 —— `bash build.sh --clean` 重编（默认 ASAN OFF）                                                                                                                                                                                                                                       |
+| `LGTBot 引擎启动失败`                                                    | 查 `build/plugins/` 下是否有各 `libgame.so`；首次编译需要等待所有 game 子项编译完成                                                                                                                                                                                                                                                           |
+| 消息发不出去 / 无响应                                                       | 检查主框架日志中 sender 是否成功初始化；QQ Bot `appid/secret` 是否正确                                                                                                                                                                                                                                                                     |
+| 段错误 / `Segmentation fault (core dumped)`                           | 通常是 ASAN 编译产物未通过 LD_PRELOAD 启动 —— `bash build.sh --clean` 重编（默认 ASAN OFF）                                                                                                                                                                                                                                              |
