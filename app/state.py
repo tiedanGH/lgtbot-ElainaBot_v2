@@ -5,9 +5,11 @@
 设计：Python 模块本身就是单例，把所有跨模块共享的状态集中在这里，
 其他子模块通过 `from . import state; state.xxx = ...` 读写，避免到处传参。
 
-跨插件热重载：`user_cache` / `pending_buttons` 等可变容器从 `boot._get_persistent()`
-取得，挂在 C++ 扩展模块对象上常驻进程，新旧模块实例引用同一份字典 ——
-这样热重载时即便旧 callback 还在用旧 state 对象，读到的还是同一份数据。
+跨插件热重载：`pending_buttons` 等可变容器从 `boot._get_persistent()` 取得，
+挂在 C++ 扩展模块对象上常驻进程，新旧模块实例引用同一份字典 —— 这样
+热重载时即便旧 callback 还在用旧 state 对象，读到的还是同一份数据。
+
+用户昵称 / 头像缓存改走 SQLite 持久化（见 ``userdb.py``），不在此模块。
 """
 
 from __future__ import annotations
@@ -28,5 +30,4 @@ started: bool = False
 
 # ── 跨重载共享的可变容器（取自 boot 持久化字典）──
 _p = boot._get_persistent()
-user_cache: dict[str, dict] = _p['user_cache']           # uid → {'name', 'avatar'}
 pending_buttons: dict[str, list] = _p['pending_buttons']  # 'g:gid'/'u:uid' → [[btn]]

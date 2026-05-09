@@ -107,7 +107,7 @@ plugins/LGTBot_ElainaBot/app/quota.py: ...            # 更不要带完整路径
 
 | 模块           | 职责                                                         |
 |--------------|------------------------------------------------------------|
-| `state`      | 共享可变全局状态容器（`user_cache` / `pending_buttons` 等）             |
+| `state`      | 共享可变全局状态容器（`pending_buttons` / `event_loop` / `started` 等） |
 | `boot`       | C++ 扩展加载（顺序敏感：`chdir` + `RTLD_GLOBAL` + `ctypes.CDLL` 预加载） |
 | `buttons`    | 按钮模板 + 命令触发正则                                              |
 | `helpers`    | 通用工具（sender / coro / mention / target_key）                 |
@@ -115,6 +115,8 @@ plugins/LGTBot_ElainaBot/app/quota.py: ...            # 更不要带完整路径
 | `callbacks`  | C++ 引擎回调实现（`cb_*` 入口 + 异步发送）                               |
 | `dispatcher` | `@handler` 注册（消息派发 + INTERACTION）                          |
 | `config`     | `data/config.yaml` 读写                                      |
+| `userdb`     | 用户昵称 / 头像 SQLite 持久化（pending dict + 5 min 批量 flush）        |
+| `uploader`   | 图床上传调度 + 图片尺寸解析                                            |
 | `webui/`     | Web 面板侧边栏页面                                                |
 
 新增功能时优先选最契合的现有模块，**只有职责明显独立时才新建文件**。

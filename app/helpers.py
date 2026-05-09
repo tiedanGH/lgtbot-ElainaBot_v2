@@ -7,7 +7,7 @@ import re
 import asyncio
 
 from core.base.logger import get_logger, PLUGIN
-from . import state
+from . import state, userdb
 
 log = get_logger(PLUGIN, 'LGTBot')
 
@@ -29,18 +29,18 @@ def humanize_mentions(text: str) -> str:
     """把 <@openid> 转成 @昵称（用于图文消息 content）
 
     QQ msg_type=7 的 content 不解析 <@openid> 提及语法，会原样显示为字面字符串。
-    本函数从 state.user_cache 取对应昵称替换，保持图文单条消息的同时让文字可读。
+    本函数从 ``userdb`` (SQLite) 取对应昵称替换，保持图文单条消息的同时让
+    文字可读。DB 未命中时退化为截短 uid 占位。
     """
     if not text or '<@' not in text:
         return text
 
     def _repl(m):
         uid = m.group(1)
-        info = state.user_cache.get(uid, {})
-        name = info.get('name', '')
+        name = userdb.get_name(uid)
         if name:
             return f'@{name}'
-        # 缓存未命中：截短 uid 占位（避免泄露完整 openid 的同时仍可识别）
+        # DB 未命中：截短 openid 占位
         return f'@{uid[:6]}…' if len(uid) > 6 else f'@{uid}'
 
     return _MENTION_RE.sub(_repl, text)

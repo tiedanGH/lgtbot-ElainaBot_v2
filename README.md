@@ -86,6 +86,7 @@ cd ../.. && python3 main.py
 | **回调按钮**        | `/新游戏` `/加入` 等命令自动附加交互按钮                                                                           |
 | **欢迎菜单**        | 单独 @机器人时回复模板菜单，含「帮助 / 游戏列表 / 排行大图 / 战绩」等按钮                                                         |
 | **菜单 logo**     | 仓库自带图片作为欢迎菜单顶部图（依赖图床上传，URL 进程内缓存 23h）                                                              |
+| **昵称持久化**       | 将 username + 头像 URL 落盘 `data/user_cache.db`（SQLite + WAL，5 min 批量 flush），离线用户在排行榜里仍能正确显示昵称         |
 | **Web 面板拓展页**   | 侧边栏「LGTBot 机器人」：消息日志 + 页面主题 + 收发/群私多维过滤 + 自动刷新                                                     |
 | **在线配置**        | `data/config.yaml` 在 Web 面板「插件 → 配置」可直接编辑保存                                                        |
 | **优雅退出**        | 进行中对局拒绝释放引擎，避免数据丢失                                                                                 |
@@ -125,6 +126,7 @@ plugins/LGTBot_ElainaBot/
 │   ├── callbacks.py         C++ 引擎回调（cb_* 入口 + 异步发送实现）
 │   ├── dispatcher.py        @handler 注册（消息派发 + INTERACTION 处理）
 │   ├── config.py            data/config.yaml 读写
+│   ├── userdb.py            用户昵称 / 头像 SQLite 持久化（5 min 批量 flush）
 │   ├── uploader.py          图床上传调度（COS / B站）+ 图片尺寸解析
 │   └── webui/               Web 面板拓展页（侧边栏「LGTBot 机器人」）
 │       ├── __init__.py
@@ -144,10 +146,11 @@ plugins/LGTBot_ElainaBot/
 │
 └── data/                    🗂 运行时数据（自动创建）
     ├── config.yaml          插件配置（Web UI 可在线编辑）
-    ├── lgtbot.db            SQLite（用户 / 对局 / 排行榜）
-    ├── images/              引擎临时渲染图片（可清理）
-    └── engine/              引擎内部文件
-        └── lgtbot.json      LGTBot 引擎全局选项（首次启动写入空 JSON）
+    ├── user_cache.db        用户昵称 / 头像缓存（删除可自动重建，无副作用）
+    └── engine/              引擎内部数据
+        ├── lgtbot.json      LGTBot 引擎全局选项（首次启动写入空 JSON）
+        ├── lgtbot.db        SQLite（用户 / 对局 / 排行榜）
+        └── images/          引擎临时渲染图片（可清理）
 ```
 
 ## 许可证

@@ -17,6 +17,11 @@ import os
 import sys
 import ctypes
 import glob
+import shutil
+
+from core.base.logger import get_logger, PLUGIN
+
+log = get_logger(PLUGIN, 'LGTBot')
 
 # ──────── 路径常量 ────────────────────────────────────────────────────────
 # __file__ → plugins/LGTBot_ElainaBot/app/boot.py  → 插件根目录是其上一级的上一级
@@ -25,14 +30,52 @@ BUILD_DIR  = os.path.join(PLUGIN_DIR, 'build')
 DATA_DIR   = os.path.join(PLUGIN_DIR, 'data')
 ENGINE_DIR = os.path.join(DATA_DIR, 'engine')        # LGTBot 引擎内部文件目录
 GAME_PATH  = os.path.join(BUILD_DIR, 'plugins')      # 各 libgame.so 所在目录
-DB_PATH    = os.path.join(DATA_DIR, 'lgtbot.db')
-IMG_PATH   = os.path.join(DATA_DIR, 'images')
+# 引擎自身的数据 —— 全部归入 data/engine/，让 data/ 根只放插件级用户数据
+DB_PATH    = os.path.join(ENGINE_DIR, 'lgtbot.db')
+IMG_PATH   = os.path.join(ENGINE_DIR, 'images')
 # 引擎自身的配置文件 —— 放在 data/engine/ 子目录避免污染 Web UI 的「插件 → 配置」
 # 入口（该入口非递归扫描 data/，子文件夹自动不可见，与 config.yaml 区分清楚）
 CONF_PATH  = os.path.join(ENGINE_DIR, 'lgtbot.json')
+# 插件管理的用户昵称 / 头像缓存（userdb 模块用），放 data/ 根方便用户感知
+USER_CACHE_DB = os.path.join(DATA_DIR, 'user_cache.db')
+
+
+# ──────── 旧版数据迁移（一次性）───────────────────────────────────────────
+# 老版本把 lgtbot.db / images/ 直接放在 data/ 根，与插件用户数据混在一起。
+# 现在统一搬到 data/engine/，让 data/ 根目录只剩 config.yaml / user_cache.db
+# 这种「插件级」资源。迁移规则：
+#   · 旧路径存在 + 新路径不存在 → shutil.move 一次到位
+#   · 新路径已存在 → 跳过（视为已迁移完成，不强删旧路径，让用户自行清理）
+#   · 任何异常 → log.warning 不阻塞启动
+# Linux 上 shutil.move 等价 rename，对已被 SQLite / engine 打开的 fd 无副作用
+# （inode 不变）；Windows 不支持本插件，无需考虑文件占用。
+
+def _migrate_legacy_paths():
+    """一次性把老版本 data/ 根下的引擎数据搬入 data/engine/"""
+    pairs = [
+        (os.path.join(DATA_DIR, 'lgtbot.db'),     os.path.join(ENGINE_DIR, 'lgtbot.db')),
+        (os.path.join(DATA_DIR, 'lgtbot.db-wal'), os.path.join(ENGINE_DIR, 'lgtbot.db-wal')),
+        (os.path.join(DATA_DIR, 'lgtbot.db-shm'), os.path.join(ENGINE_DIR, 'lgtbot.db-shm')),
+        (os.path.join(DATA_DIR, 'images'),        os.path.join(ENGINE_DIR, 'images')),
+    ]
+    for src, dst in pairs:
+        if not os.path.exists(src):
+            continue
+        if os.path.exists(dst):
+            # 新路径已就位（含本次 mkdir(ENGINE_DIR) 后的空目录），不强迁
+            continue
+        try:
+            shutil.move(src, dst)
+            log.info(f'迁移引擎数据: {src} → {dst}')
+        except Exception as e:
+            log.warning(f'迁移失败 {src} → {dst}: {e}')
+
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(ENGINE_DIR, exist_ok=True)
+# 迁移必须在 mkdir(IMG_PATH) 之前 —— 否则 engine/images/ 已存在会让
+# shutil.move(data/images, engine/images) 退化成「移动到子目录」而非重命名
+_migrate_legacy_paths()
 os.makedirs(IMG_PATH, exist_ok=True)
 
 
@@ -88,13 +131,15 @@ if _chdir_ok:
 # 重新 import；但 C++ 扩展 `LGTBot_ElainaBot` 一旦被 dlopen 就常驻进程内，sys.modules
 # 也保留缓存。利用这一点，把所有需要跨重载共享的可变容器挂到扩展模块对象上：
 #
-#   user_cache       - 用户昵称/头像缓存
 #   pending_buttons  - 命令触发的待附按钮（一次性消费）
 #   active_ref       - 被动消息配额状态（msg_id/event_id + count）
 #   ref_waiters      - 配额满时等待的 asyncio.Event 列表
 #
 # 这样旧 callback（持有旧模块引用）和新 dispatcher（新模块引用）操作的都是
 # 同一份字典，热重载后玩家命令仍能正确路由到旧引擎里仍在进行的游戏。
+#
+# 注：早期版本这里还有 'user_cache'，已迁移到 SQLite 持久化（见 userdb.py），
+# 跨重载共享走 DB 而非内存 dict；旧版本残留的该 key 会被下面 pop 掉。
 _PERSIST_ATTR = '_elaina_persistent'
 _ENGINE_RUNNING_ATTR = '_elaina_engine_running'
 
@@ -105,26 +150,24 @@ def _get_persistent() -> dict:
     第一次插件加载：扩展模块上没有 _elaina_persistent → 创建新 dict
     后续热重载：直接复用已有的 dict（旧字典里的所有 key/value 仍可访问）
     """
+    default = {
+        'pending_buttons': {},
+        'active_ref': {},
+        'ref_waiters': {},
+    }
     if LGTBot_ElainaBot is None:
         # 扩展未编译：返回一次性的 fallback dict（不会跨重载共享，但避免 None）
-        return {
-            'user_cache': {},
-            'pending_buttons': {},
-            'active_ref': {},
-            'ref_waiters': {},
-        }
+        return default
     p = getattr(LGTBot_ElainaBot, _PERSIST_ATTR, None)
     if p is None:
-        p = {
-            'user_cache': {},
-            'pending_buttons': {},
-            'active_ref': {},
-            'ref_waiters': {},
-        }
+        p = default
         try:
             setattr(LGTBot_ElainaBot, _PERSIST_ATTR, p)
         except Exception:
             pass
+    else:
+        # 老版本的内存 user_cache：迁移后已无人读，pop 掉避免长期占内存
+        p.pop('user_cache', None)
     return p
 
 

@@ -19,7 +19,7 @@ from core.message.event import (
     INTERACTION_CREATE,
 )
 
-from . import state, quota, helpers, boot, buttons, uploader
+from . import state, quota, helpers, boot, buttons, uploader, userdb
 from .webui import message_log
 
 log = get_logger(PLUGIN, 'LGTBot')
@@ -65,14 +65,11 @@ async def lgtbot_dispatch(event, match):
     gid = event.group_id or event.channel_id or ''
 
     # 用户缓存：昵称 + 头像 URL（事件携带 username + 用 appid 推导头像）
+    # 走 userdb 落盘，5 分钟批量 flush；name / avatar 任一为空时不会覆盖 DB 旧值
     if uid:
         appid = event.appid or ''
         avatar = helpers.QQ_AVATAR_URL.format(appid=appid, openid=uid) if appid else ''
-        old = state.user_cache.get(uid, {})
-        state.user_cache[uid] = {
-            'name': getattr(event, 'username', '') or old.get('name', ''),
-            'avatar': avatar or old.get('avatar', ''),
-        }
+        userdb.mark_dirty(uid, name=getattr(event, 'username', '') or '', avatar=avatar)
 
     # 用户消息 → 用 msg_id 刷新被动引用配额（5 条新额度）
     appid_str = event.appid or ''

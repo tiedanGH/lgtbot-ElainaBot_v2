@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""
-LGTBot × ElainaBot 集成插件 (QQ Official Bot) —— 入口文件
+"""LGTBot × ElainaBot 集成插件 (QQ Official Bot) —— 入口文件
 
 各功能拆分到 app/ 子模块（详见 app/__init__.py），本文件只负责：
 
@@ -42,6 +41,7 @@ _state.plugin_ctx = _ctx_mod.ctx
 # 顺序敏感：boot 必须最先（处理 C++ 扩展导入 + chdir + RTLD_GLOBAL 副作用），
 # 其他模块依赖 boot.LGTBot_ElainaBot / boot.BUILD_DIR / boot.LGTBOT_AVAILABLE 等
 from plugins.LGTBot_ElainaBot.app import boot              # noqa: F401  C++ 引擎与路径
+from plugins.LGTBot_ElainaBot.app import userdb            # noqa: F401  用户昵称 / 头像 SQLite
 from plugins.LGTBot_ElainaBot.app.webui import message_log # noqa: F401  Web 面板侧边栏页面
 from plugins.LGTBot_ElainaBot.app import dispatcher        # noqa: F401  @handler 注册（消息派发 + INTERACTION）
 from plugins.LGTBot_ElainaBot.app import callbacks         # C++ 回调（被 LGTBot_ElainaBot.start 注入）
@@ -69,6 +69,10 @@ async def _setup():
 
     # 捕获主事件循环 —— C++ 工作线程通过 run_coroutine_threadsafe 调度到此循环
     _state.event_loop = asyncio.get_running_loop()
+
+    # 启动 userdb 5 分钟周期 flusher（在所有 early-return 之前，热重载复用
+    # 旧引擎那条路径上 dispatcher 仍会 mark_dirty，flusher 必须就位）
+    userdb.start_flusher(_state.event_loop)
 
     # ── 热重载检测：上一轮的引擎可能还活着 ─────────────────────────────────
     # 若此时再调 LGTBot_ElainaBot.start()，C++ 会覆盖 g_bot_core，旧引擎实例被丢弃，
@@ -124,18 +128,33 @@ async def _setup():
 
 @on_unload
 async def _teardown():
+    # userdb：先停 flusher，再同步 flush 一次 pending 到盘，最后关连接。
+    # 任何 SQLite 异常吞掉，避免阻断后续 message_log.unregister / 引擎释放
+    try:
+        userdb.stop_flusher()
+        userdb.flush_now()
+    except Exception as e:
+        log.warning(f'userdb 关停异常: {e}')
+
     # 注销 Web 面板页面（无论引擎状态如何）
     try:
         message_log.unregister()
     except Exception:
         pass
 
-    if not _state.started or not boot.LGTBOT_AVAILABLE:
-        return
-    if boot.LGTBot_ElainaBot.release_bot_if_not_processing_games():
-        _state.started = False
-        boot.mark_engine_running(False)
-        log.info('LGTBot 引擎已安全关闭')
-    else:
-        # 关键：保留 mark_engine_running(True)，下次 @on_load 据此跳过 start()
-        log.warning('存在进行中的游戏 —— 引擎未释放，热重载后将复用旧引擎以保持游戏状态')
+    try:
+        if not _state.started or not boot.LGTBOT_AVAILABLE:
+            return
+        if boot.LGTBot_ElainaBot.release_bot_if_not_processing_games():
+            _state.started = False
+            boot.mark_engine_running(False)
+            log.info('LGTBot 引擎已安全关闭')
+        else:
+            # 关键：保留 mark_engine_running(True)，下次 @on_load 据此跳过 start()
+            log.warning('存在进行中的游戏 —— 引擎未释放，热重载后将复用旧引擎以保持游戏状态')
+    finally:
+        # 关连接放在最后：上面 release_bot 失败也别漏掉关 DB
+        try:
+            userdb.close()
+        except Exception:
+            pass

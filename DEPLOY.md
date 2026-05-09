@@ -91,7 +91,7 @@ python3 main.py         # 启动主框架，自动加载插件
 启动应看到类似日志：
 ```
 [插件:LGTBot] LGTBot 管理员配置：1 人
-[插件:LGTBot] 初始化 LGTBot 引擎: 游戏数=52, db=plugins/LGTBot_ElainaBot/data/lgtbot.db, conf=plugins/LGTBot_ElainaBot/data/engine/lgtbot.json
+[插件:LGTBot] 初始化 LGTBot 引擎: 游戏数=52, db=plugins/LGTBot_ElainaBot/data/engine/lgtbot.db, conf=plugins/LGTBot_ElainaBot/data/engine/lgtbot.json
 [插件:LGTBot] ✅ LGTBot 引擎已就绪
 [插件:LGTBot_ElainaBot] 大型插件加载完成 (1 个处理器, 0.12s)
 ```
@@ -178,3 +178,4 @@ rm -rf plugins/LGTBot_ElainaBot
 | `LGTBot 引擎启动失败`                                                    | 查 `build/plugins/` 下是否有各 `libgame.so`；首次编译需要等待所有 game 子项编译完成                                                                                                                                                                                                                                                           |
 | 消息发不出去 / 无响应                                                       | 检查主框架日志中 sender 是否成功初始化；QQ Bot `appid/secret` 是否正确                                                                                                                                                                                                                                                                     |
 | 段错误 / `Segmentation fault (core dumped)`                           | 通常是 ASAN 编译产物未通过 LD_PRELOAD 启动 —— `bash build.sh --clean` 重编（默认 ASAN OFF）                                                                                                                                                                                                                                              |
+| 排行榜 / 战绩里离线用户显示成 `<XXXX…YYYY>` 这种截断 openid                         | 该用户从未在本插件运行期间发过消息，`data/user_cache.db` 没有他的昵称记录。等其下次发言即自动补齐。`rm data/user_cache.db` 等于清空全部昵称缓存，下次有用户发消息时表会自动重建（无副作用）                                                                                                                                                                                                   |

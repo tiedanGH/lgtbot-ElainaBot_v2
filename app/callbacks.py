@@ -18,7 +18,7 @@ import os
 import time
 
 from core.base.logger import get_logger, PLUGIN
-from . import state, quota, helpers, boot, uploader
+from . import state, quota, helpers, boot, uploader, userdb
 from .webui import message_log
 
 log = get_logger(PLUGIN, 'LGTBot')
@@ -27,28 +27,27 @@ log = get_logger(PLUGIN, 'LGTBot')
 # ──────── 用户信息回调（被 LGTBot 引擎调用，需返回字符串） ─────────────────
 
 def cb_get_user_name(uid: str) -> str:
-    """C++ → Python：返回用户昵称（找不到时返回 uid）"""
-    info = state.user_cache.get(uid)
-    return info['name'] if info and info.get('name') else uid
+    """C++ → Python：返回用户昵称（DB 未命中时返回 uid 兜底）"""
+    return userdb.get_name(uid) or uid
 
 
 def cb_get_user_avatar_url(uid: str) -> str:
     """C++ → Python：返回头像 URL
 
-    优先从缓存取（消息事件中已用 event.appid 拼好）；
-    若缓存未命中（如历史排行榜里的离线用户），用任一活跃 Bot 的 appid 推导。
+    优先从 userdb 取（写入时 appid 正确，多 bot 部署下用 DB 缓存的 URL
+    比临时 fallback 更准确）；DB 未命中（如历史排行榜里的离线用户）则
+    用任一活跃 Bot 的 appid 临时推导，不写回 DB —— 等用户下次发消息时
+    dispatcher 会用真正的 event.appid 落盘。
     C++ 端 DownloadUserAvatar 会用 libcurl 下载，失败则跳过。
     """
-    info = state.user_cache.get(uid)
-    if info and info.get('avatar'):
-        return info['avatar']
+    cached = userdb.get_avatar(uid)
+    if cached:
+        return cached
     try:
         from core.bot.manager import _bot_manager_ref
         if _bot_manager_ref and _bot_manager_ref._bots:
             appid = next(iter(_bot_manager_ref._bots.keys()))
-            url = helpers.QQ_AVATAR_URL.format(appid=appid, openid=uid)
-            state.user_cache.setdefault(uid, {})['avatar'] = url
-            return url
+            return helpers.QQ_AVATAR_URL.format(appid=appid, openid=uid)
     except Exception:
         pass
     return ''
