@@ -86,10 +86,24 @@ _conn = _init_conn()
 
 
 # ──────── 读路径 ──────────────────────────────────────────────────────────
+# 查找顺序：内存 _pending → SQLite。
+#   理由：mark_dirty 写入 _pending 后,flusher 默认 5 分钟才落盘,在此之前
+#   纯走 SELECT 会查不到（新用户首次发消息后整整 5 分钟内昵称仍显示截断
+#   openid）。先看 _pending 既消除这个窗口,也比 SQLite 主键查询快一个
+#   数量级（dict.get ~100ns vs SELECT ~10µs）。
+#
+# 线程安全：_pending 的写都在 asyncio loop 线程串行执行,读发生在 C++
+# 工作线程。GIL 保证 dict.get 原子,`_pending = {}` 重绑定也原子,读到
+# 的总是某个一致的 dict 对象。
 
 def get_name(openid: str) -> str:
-    """SELECT name —— 命中返回，未命中返回 ''。任何异常吞掉返回 ''。"""
-    if not openid or _conn is None:
+    """命中返回 name,未命中返回 ''。先查 _pending 再查 DB,异常吞掉返回 ''。"""
+    if not openid:
+        return ''
+    pend = _pending.get(openid)
+    if pend and pend.get('name'):
+        return pend['name']
+    if _conn is None:
         return ''
     try:
         cur = _conn.execute(
@@ -102,8 +116,13 @@ def get_name(openid: str) -> str:
 
 
 def get_avatar(openid: str) -> str:
-    """SELECT avatar —— 命中返回，未命中返回 ''。"""
-    if not openid or _conn is None:
+    """命中返回 avatar,未命中返回 ''。先查 _pending 再查 DB。"""
+    if not openid:
+        return ''
+    pend = _pending.get(openid)
+    if pend and pend.get('avatar'):
+        return pend['avatar']
+    if _conn is None:
         return ''
     try:
         cur = _conn.execute(
