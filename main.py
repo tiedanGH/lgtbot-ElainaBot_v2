@@ -116,6 +116,7 @@ async def _setup():
         boot.GAME_PATH, boot.DB_PATH, boot.CONF_PATH, boot.IMG_PATH, admins,
         callbacks.cb_get_user_name, callbacks.cb_get_user_avatar_url,
         callbacks.cb_send_text_message, callbacks.cb_send_image_message,
+        callbacks.cb_match_announce,
     )
     if not ok:
         log.error('LGTBot 引擎启动失败 (查看上方 stderr 输出)')

@@ -31,3 +31,6 @@ started: bool = False
 # ── 跨重载共享的可变容器（取自 boot 持久化字典）──
 _p = boot._get_persistent()
 pending_buttons: dict[str, list] = _p['pending_buttons']  # 'g:gid'/'u:uid' → [[btn]]
+# /新游戏 X 时记录;/加入 时回查给「📜 规则」按钮用 —— 跨热重载持久,
+# 进程重启即丢(失忆群按 /加入 时该按钮会缺规则,无大碍)。
+current_game: dict[str, str] = _p.setdefault('current_game', {})  # target_key → 游戏名

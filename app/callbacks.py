@@ -18,13 +18,25 @@ import os
 import time
 
 from core.base.logger import get_logger, PLUGIN
-from . import state, quota, helpers, boot, uploader, userdb
+from . import state, quota, helpers, boot, uploader, userdb, buttons
 from .webui import message_log
 
 log = get_logger(PLUGIN, 'LGTBot')
 
 
 # ──────── 用户信息回调（被 LGTBot 引擎调用，需返回字符串） ─────────────────
+
+def cb_match_announce(target_id: str, is_uid: bool, game_name: str):
+    """C++ → Python：bridge 在 BriefInfo 里解析到「游戏名称：X」时调用本回调。
+
+    LGTBot 的 BriefInfo 在新建房间 / 玩家加入 / 玩家退出 / 改设置 后都会广播,
+    bridge 层每次都会拉到游戏名透传过来,本侧把它写入 state.current_game,
+    供 cb_send_text_message 现场构造「📜 规则」按钮用。
+    """
+    if not target_id or not game_name:
+        return
+    state.current_game[helpers.target_key(target_id, is_uid)] = game_name
+
 
 def cb_get_user_name(uid: str) -> str:
     """C++ → Python：返回用户昵称（DB 未命中时返回 uid 兜底）"""
@@ -57,7 +69,13 @@ def cb_get_user_avatar_url(uid: str) -> str:
 
 def cb_send_text_message(target_id: str, is_uid: bool, msg: str):
     """C++ → Python：发送文本消息（带配额管理 + 按钮接力续命）"""
-    extra_buttons = state.pending_buttons.pop(helpers.target_key(target_id, is_uid), None)
+    key = helpers.target_key(target_id, is_uid)
+    extra_buttons = state.pending_buttons.pop(key, None)
+    # PENDING_GAME_ACTION sentinel:dispatcher 留下的「按发送时游戏名构造」标记。
+    # 此处刚好是 cb_match_announce 之后(同一次 HandleMessages 内 bridge 先调
+    # match_announce 再调 send_text_message),current_game[key] 已是最新值。
+    if extra_buttons == buttons.PENDING_GAME_ACTION:
+        extra_buttons = buttons.build_game_action_buttons(state.current_game.get(key))
     message_log.log_outgoing(target_id, is_uid, msg)
 
     async def _do():

@@ -25,6 +25,7 @@ PyObject* g_get_user_name     = nullptr;
 PyObject* g_get_user_avatar_url = nullptr;
 PyObject* g_send_text_message = nullptr;
 PyObject* g_send_image_message = nullptr;
+PyObject* g_match_announce    = nullptr;
 
 // ──── GIL 辅助 RAII ──────────────────────────────────────────────────────
 class AcquireGIL {
@@ -86,6 +87,31 @@ void HandleMessages(void* handler, const char* const id, const int is_uid,
 
     try {
         AcquireGIL a;
+
+        // 在分发文本/图片之前，扫描 BriefInfo 标记 "游戏名称：X\n"——
+        // lgtbot 在新建 / 加入 / 退出 / 设置改动 后都会 broadcast 一次 brief，
+        // 借此把当前 target 在玩什么游戏稳定地透传给 Python（state.current_game），
+        // 让「📜 规则」按钮即使是 /随机游戏 也能拿到正确游戏名。
+        // 标记字符串和上游 lgtbot/bot_core/match.cc::Match::BriefInfo_ 必须保持一致。
+        if (g_match_announce != nullptr) {
+            static const std::string kGameNameMarker = "\xe6\xb8\xb8\xe6\x88\x8f\xe5\x90\x8d\xe7\xa7\xb0\xef\xbc\x9a"; // "游戏名称："
+            const size_t marker_pos = content.find(kGameNameMarker);
+            if (marker_pos != std::string::npos) {
+                const size_t name_start = marker_pos + kGameNameMarker.size();
+                const size_t name_end = content.find('\n', name_start);
+                std::string game_name = (name_end == std::string::npos)
+                    ? content.substr(name_start)
+                    : content.substr(name_start, name_end - name_start);
+                if (!game_name.empty()) {
+                    try {
+                        boost::python::call<void>(g_match_announce, id, is_uid, game_name);
+                    } catch (...) {
+                        std::cerr << "[LGTBot_ElainaBot] match_announce dispatch failed" << std::endl;
+                    }
+                }
+            }
+        }
+
         if (images.empty()) {
             if (!content.empty()) {
                 boost::python::call<void>(g_send_text_message, id, is_uid, content);
@@ -202,7 +228,8 @@ bool Start(
         PyObject* get_user_name,
         PyObject* get_user_avatar_url,
         PyObject* send_text_message,
-        PyObject* send_image_message)
+        PyObject* send_image_message,
+        PyObject* match_announce)
 {
     ReleaseGIL r;
     const LGTBot_Option option {
@@ -222,6 +249,7 @@ bool Start(
     g_get_user_avatar_url = get_user_avatar_url;
     g_send_text_message  = send_text_message;
     g_send_image_message = send_image_message;
+    g_match_announce     = match_announce;
 
     const char* errmsg = nullptr;
     g_bot_core = LGTBot_Create(&option, &errmsg);

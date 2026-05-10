@@ -16,11 +16,35 @@
 from __future__ import annotations
 import re
 
+# dispatcher 在 state.pending_buttons[key] 里塞这个 sentinel,代表「下一条
+# 文本回复发送时,用 build_game_action_buttons(state.current_game[key]) 现场
+# 构造按钮」。延后构造的原因：游戏名由 C++ 桥接层异步通过 cb_match_announce
+# 写入 current_game,dispatcher 接到用户命令的瞬间还拿不到。
+PENDING_GAME_ACTION = '__pending_game_action__'
+
+
 # 玩家在 LGTBot 房间里常用动作（创建/加入后追加在文本回复后）
-GAME_ACTION_BUTTONS = [[
-    {'text': '🟢 加入', 'data': '/加入', 'type': 2, 'style': 1},
-    {'text': '🔴 退出', 'data': '/退出', 'type': 2, 'style': 3},
-]]
+def build_game_action_buttons(game_name: str | None = None) -> list[list[dict]]:
+    """构造创建/加入房间后追加的按钮组。
+
+    基础两个按钮（加入 / 退出）始终给出;若已知当前游戏名,再追加一行
+    `/规则 <游戏名>` 按钮,玩家点一下就能直接查看规则。
+    游戏名未知时（/随机游戏 进入时尚未知道引擎随机到了什么 / 进程重启
+    后老房间）则不显示规则按钮,避免点出错误的规则。
+    """
+    rows: list[list[dict]] = [
+        [
+            {'text': '🟢 加入', 'data': '/加入', 'type': 2, 'style': 1},
+            {'text': '🔴 退出', 'data': '/退出', 'type': 2, 'style': 3},
+        ],
+    ]
+    if game_name:
+        rows.append([
+            {'text': f'📜 《{game_name}》规则',
+             'data': f'/规则 {game_name}',
+             'type': 2, 'style': 1},
+        ])
+    return rows
 
 # 单独 @ 机器人时回复的欢迎菜单按钮
 MENU_BUTTONS = [
@@ -31,6 +55,14 @@ MENU_BUTTONS = [
     [
         {'text': '🎮 创建房间', 'data': '/新游戏',  'type': 2, 'style': 1},
         {'text': '📊 我的战绩', 'data': '/战绩',    'type': 2, 'style': 1},
+    ],
+    [
+        {'text': '数字蜂巢', 'data': '/新游戏 数字蜂巢', 'type': 2, 'style': 0},
+        {'text': '天赋云巢', 'data': '/新游戏 天赋云巢', 'type': 2, 'style': 0},
+    ],
+    [
+        {'text': '五子棋', 'data': '/新游戏 五子棋',  'type': 2, 'style': 0},
+        {'text': '困兽棋', 'data': '/新游戏 困兽棋',  'type': 2, 'style': 0},
     ],
     # 链接按钮（type=0）
     [
