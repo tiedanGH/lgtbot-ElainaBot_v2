@@ -16,26 +16,26 @@
 from __future__ import annotations
 import re
 
-# 玩家在 LGTBot 房间里常用动作（创建/加入/退出后追加在文本回复后）
+# 玩家在 LGTBot 房间里常用动作（创建/加入后追加在文本回复后）
 GAME_ACTION_BUTTONS = [[
     {'text': '🟢 加入', 'data': '/加入', 'type': 2, 'style': 1},
     {'text': '🔴 退出', 'data': '/退出', 'type': 2, 'style': 3},
 ]]
 
-# 单独 @ 机器人时回复的欢迎菜单按钮（4 个命令快捷键 + 3 个外链）
+# 单独 @ 机器人时回复的欢迎菜单按钮
 MENU_BUTTONS = [
     [
-        {'text': '📖 查看帮助', 'data': '/帮助',     'type': 2, 'style': 4},
+        {'text': '📖 查看帮助', 'data': '/帮助',    'type': 2, 'style': 4},
         {'text': '🎲 游戏列表', 'data': '/游戏列表', 'type': 2, 'style': 4},
     ],
     [
-        {'text': '🏆 排行大图', 'data': '/排行大图', 'type': 2, 'style': 1},
-        {'text': '📊 我的战绩', 'data': '/战绩',     'type': 2, 'style': 1},
+        {'text': '🎮 创建房间', 'data': '/新游戏',  'type': 2, 'style': 1},
+        {'text': '📊 我的战绩', 'data': '/战绩',    'type': 2, 'style': 1},
     ],
-    # 链接按钮（type=0）—— 不受 button_enter_to_send 影响，行为永远一致
+    # 链接按钮（type=0）
     [
         {'text': '仓库',
-         'link': 'https://github.com/tiedanGH/lgtbot-ElainaBot_v2'},
+         'link': 'https://github.com/tiedanGH/LGTBot_ElainaBot'},
         {'text': '网站',
          'link': 'https://tiedan.site'},
         {'text': '官群',
@@ -47,7 +47,7 @@ MENU_BUTTONS = [
     ],
 ]
 
-# 触发"加入/退出"按钮的命令模式：/新游戏、/加入、/退出、/随机游戏
+# 触发"加入/退出"按钮的命令模式：/新游戏、/加入、/随机游戏
 GAME_ACTION_RE = re.compile(r'^\s*/(新游戏|加入|随机游戏)(\s|$)')
 
 # 单独 @ bot（content 为空）时回复的欢迎语
@@ -58,10 +58,7 @@ MENU_TEXT_HEADER = (
     '\n'
 )
 MENU_TEXT_BODY = (
-    '▸ 群内 @我 + `/新游戏 <名称>` 创建房间\n'
-    '▸ 发送 `/加入` 即可参加游戏\n'
-    '▸ 也可私聊体验单机游戏\n\n'
-    '👇 点下方按钮快速开始'
+    ''
 )
 # 兼容旧引用：拼接版
 MENU_TEXT = MENU_TEXT_HEADER + MENU_TEXT_BODY
