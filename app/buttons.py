@@ -18,21 +18,24 @@ from __future__ import annotations
 
 # 玩家在 LGTBot 房间里常用动作（C++ 桥接层 ClassifyMatchEvent 决定挂在哪条上）
 def build_game_action_buttons(game_name: str | None = None,
-                              include_rule: bool = False) -> list[list[dict]]:
+                              include_rule: bool = False,
+                              include_join_leave: bool = True) -> list[list[dict]]:
     """构造房间相关按钮组。
 
-    第一行恒为「加入 / 退出」。
-    `include_rule=True`（仅新建房间消息）且游戏名已知时,第二行追加
-    `/规则 <游戏名>` 按钮,玩家直接点开规则。
-    其他消息（/加入 / /退出 等）传 ``include_rule=False`` 只显示第一行,
-    避免在已知房间里反复提示规则。
+    `include_join_leave=True`(群聊默认)时,第一行是「加入 / 退出」;私信
+    场景调用方传 False 跳过这一行,因为 DM 里玩家通常自己就是房主或经
+    match_id 加入,/加入 这种群内简写并不适用。
+    `include_rule=True`(仅新建房间消息)且游戏名已知时,追加一行
+    `/规则 <游戏名>` 按钮。
+    两个开关都关掉且无游戏名时返回空列表,调用方负责跳过 pending_buttons
+    的写入。
     """
-    rows: list[list[dict]] = [
-        [
+    rows: list[list[dict]] = []
+    if include_join_leave:
+        rows.append([
             {'text': '🟢 加入', 'data': '/加入', 'type': 2, 'style': 1},
             {'text': '🔴 退出', 'data': '/退出', 'type': 2, 'style': 3},
-        ],
-    ]
+        ])
     if include_rule and game_name:
         rows.append([
             {'text': f'📖 《{game_name}》规则', 'data': f'/规则 {game_name}', 'type': 2, 'style': 4},

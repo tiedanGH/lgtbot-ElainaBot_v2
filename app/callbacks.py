@@ -59,13 +59,22 @@ def cb_match_event(target_id: str, is_uid: bool, kind: str, game_name: str):
     elif game_name:
         state.current_game[key] = game_name
 
-    # 按钮挂载
+    # 按钮挂载 —— 私信场景(is_uid=True)的 /加入 /退出 按钮无意义,统一关掉:
+    #   · DM new_game   → 只挂规则按钮(若 game_name 已知)
+    #   · DM join_leave → 不挂任何按钮(空 brief 消息直发)
+    #   · 群聊行为不变
     if kind == 'new_game':
-        state.pending_buttons[key] = buttons.build_game_action_buttons(
-            state.current_game.get(key), include_rule=True)
+        btns = buttons.build_game_action_buttons(
+            state.current_game.get(key),
+            include_rule=True,
+            include_join_leave=not is_uid,
+        )
+        if btns:  # DM 且 game_name 未知 → 空列表,跳过 pending_buttons 写入
+            state.pending_buttons[key] = btns
     elif kind == 'join_leave':
-        state.pending_buttons[key] = buttons.build_game_action_buttons(
-            state.current_game.get(key), include_rule=False)
+        if not is_uid:
+            state.pending_buttons[key] = buttons.build_game_action_buttons(
+                state.current_game.get(key), include_rule=False)
     elif kind == 'all_left':
         state.pending_buttons[key] = buttons.build_dissolve_buttons()
     elif kind == 'unknown_meta':
