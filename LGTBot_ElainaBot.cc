@@ -9,6 +9,14 @@
  *   2. 用户 Mention 格式：Kook (met)uid(met) → QQ Markdown <@uid>
  */
 
+// 抑制 Boost 自身链路里残留的 deprecation `#pragma message`：
+//   · BOOST_BIND_GLOBAL_PLACEHOLDERS —— 显式接受 _1 / _2 仍在全局命名空间
+//   · BOOST_ALLOW_DEPRECATED_HEADERS —— 接受 boost.python 仍然间接引用
+//                                       已被 Boost 标记为 deprecated 的内部头
+// 两个都是 Boost 官方给消费者的 opt-in 开关，只关警告，不改行为。
+#define BOOST_BIND_GLOBAL_PLACEHOLDERS
+#define BOOST_ALLOW_DEPRECATED_HEADERS
+
 #include <boost/python.hpp>
 #include <boost/python/call.hpp>
 
