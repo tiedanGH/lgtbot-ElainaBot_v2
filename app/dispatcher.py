@@ -54,7 +54,7 @@ _LGT_MSG_EVENTS = frozenset({
 
 # ──────── 消息派发 ────────────────────────────────────────────────────────
 
-@handler(r'.*', priority=-100, event_types=_LGT_MSG_EVENTS)
+@handler(r'.*', name='LGTBot 消息派发', priority=-100, event_types=_LGT_MSG_EVENTS)
 async def lgtbot_dispatch(event, match):
     """将所有群 @ / 私聊消息派发给 LGTBot 引擎（不消费事件，其他插件仍可处理）"""
     if not state.started:
@@ -129,7 +129,7 @@ async def lgtbot_dispatch(event, match):
 #
 # 用户体验：点击按钮无明显反应（仅短暂 toast），但被动消息能力立即恢复 5 条
 
-@handler(r'.*', priority=-200, event_types={INTERACTION_CREATE})
+@handler(r'.*', name='LGTBot 刷新按钮回调', priority=-200, event_types={INTERACTION_CREATE})
 async def lgtbot_interaction_relay(event, match):
     try:
         await event.ack_interaction(code=0)
