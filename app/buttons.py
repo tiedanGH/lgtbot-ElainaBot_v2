@@ -14,23 +14,18 @@
 """
 
 from __future__ import annotations
-import re
-
-# dispatcher 在 state.pending_buttons[key] 里塞这个 sentinel,代表「下一条
-# 文本回复发送时,用 build_game_action_buttons(state.current_game[key]) 现场
-# 构造按钮」。延后构造的原因：游戏名由 C++ 桥接层异步通过 cb_match_announce
-# 写入 current_game,dispatcher 接到用户命令的瞬间还拿不到。
-PENDING_GAME_ACTION = '__pending_game_action__'
 
 
-# 玩家在 LGTBot 房间里常用动作（创建/加入后追加在文本回复后）
-def build_game_action_buttons(game_name: str | None = None) -> list[list[dict]]:
-    """构造创建/加入房间后追加的按钮组。
+# 玩家在 LGTBot 房间里常用动作（C++ 桥接层 ClassifyMatchEvent 决定挂在哪条上）
+def build_game_action_buttons(game_name: str | None = None,
+                              include_rule: bool = False) -> list[list[dict]]:
+    """构造房间相关按钮组。
 
-    基础两个按钮（加入 / 退出）始终给出;若已知当前游戏名,再追加一行
-    `/规则 <游戏名>` 按钮,玩家点一下就能直接查看规则。
-    游戏名未知时（/随机游戏 进入时尚未知道引擎随机到了什么 / 进程重启
-    后老房间）则不显示规则按钮,避免点出错误的规则。
+    第一行恒为「加入 / 退出」。
+    `include_rule=True`（仅新建房间消息）且游戏名已知时,第二行追加
+    `/规则 <游戏名>` 按钮,玩家直接点开规则。
+    其他消息（/加入 / /退出 等）传 ``include_rule=False`` 只显示第一行,
+    避免在已知房间里反复提示规则。
     """
     rows: list[list[dict]] = [
         [
@@ -38,13 +33,27 @@ def build_game_action_buttons(game_name: str | None = None) -> list[list[dict]]:
             {'text': '🔴 退出', 'data': '/退出', 'type': 2, 'style': 3},
         ],
     ]
-    if game_name:
+    if include_rule and game_name:
         rows.append([
             {'text': f'📜 《{game_name}》规则',
              'data': f'/规则 {game_name}',
-             'type': 2, 'style': 1},
+             'type': 2, 'style': 4},
         ])
     return rows
+
+
+def build_dissolve_buttons() -> list[list[dict]]:
+    """房间因全员退出而解散时建议的两个引导按钮:看看别的游戏 / 直接再开一局。
+
+    仅在「所有玩家都退出了游戏」/「所有玩家都强制退出了游戏」这两条解散
+    广播上附加（见 LGTBot_ElainaBot.cc::ClassifyMatchEvent 的 ``all_left``
+    分支）。/新游戏 时引擎前置发出的「游戏已解散，谢谢大家参与」(Terminate)
+    不附,因为紧跟着会有真正的新建房间消息覆盖。
+    """
+    return [[
+        {'text': '🎲 游戏列表', 'data': '/游戏列表', 'type': 2, 'style': 4},
+        {'text': '🎮 创建房间', 'data': '/新游戏',  'type': 2, 'style': 1},
+    ]]
 
 # 单独 @ 机器人时回复的欢迎菜单按钮
 MENU_BUTTONS = [
@@ -78,9 +87,6 @@ MENU_BUTTONS = [
                   '&svctype=4&tempid=h5_group_info')},
     ],
 ]
-
-# 触发"加入/退出"按钮的命令模式：/新游戏、/加入、/随机游戏
-GAME_ACTION_RE = re.compile(r'^\s*/(新游戏|加入|随机游戏)(\s|$)')
 
 # 单独 @ bot（content 为空）时回复的欢迎语
 MENU_TEXT_HEADER = (

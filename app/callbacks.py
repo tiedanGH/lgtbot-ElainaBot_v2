@@ -26,16 +26,45 @@ log = get_logger(PLUGIN, 'LGTBot')
 
 # ──────── 用户信息回调（被 LGTBot 引擎调用，需返回字符串） ─────────────────
 
-def cb_match_announce(target_id: str, is_uid: bool, game_name: str):
-    """C++ → Python：bridge 在 BriefInfo 里解析到「游戏名称：X」时调用本回调。
+def cb_match_event(target_id: str, is_uid: bool, kind: str, game_name: str):
+    """C++ → Python：bridge 按消息内容分类后调用,把按钮 / 当前游戏名一次性敲定。
 
-    LGTBot 的 BriefInfo 在新建房间 / 玩家加入 / 玩家退出 / 改设置 后都会广播,
-    bridge 层每次都会拉到游戏名透传过来,本侧把它写入 state.current_game,
-    供 cb_send_text_message 现场构造「📜 规则」按钮用。
+    bridge 端的分类逻辑见 ``LGTBot_ElainaBot.cc::ClassifyMatchEvent``;本侧只
+    根据 ``kind`` 走 switch:
+
+      ``announce``   仅刷新 ``state.current_game[key]``(brief 出现但非
+                     新建/加入/退出场景,如 /设置 成功后的回执),不动按钮。
+      ``new_game``   刷新游戏名;在下一条文本回复挂「加入 / 退出 + 规则」。
+      ``join_leave`` 刷新游戏名;挂「加入 / 退出」(不含规则,玩家已在房中)。
+      ``all_left``   清空当前游戏名;挂「游戏列表 / 创建房间」引导。
+      ``terminate``  清空当前游戏名,不挂按钮(/新游戏 前置解散 / 管理员
+                     主动结束等场景,紧接着会有真正的新建消息覆盖,或就该
+                     安静收尾)。
+
+    所有按钮通过 ``state.pending_buttons[key]`` 暂存,被随后的
+    ``cb_send_text_message`` pop 出来一次性附上(bridge 调本回调 → 再调
+    send_text_message,同步顺序,GIL 下读写安全)。
     """
-    if not target_id or not game_name:
+    if not target_id:
         return
-    state.current_game[helpers.target_key(target_id, is_uid)] = game_name
+    key = helpers.target_key(target_id, is_uid)
+
+    # 状态更新
+    if kind in ('all_left', 'terminate'):
+        state.current_game.pop(key, None)
+    elif game_name:
+        state.current_game[key] = game_name
+
+    # 按钮挂载
+    if kind == 'new_game':
+        state.pending_buttons[key] = buttons.build_game_action_buttons(
+            state.current_game.get(key), include_rule=True)
+    elif kind == 'join_leave':
+        state.pending_buttons[key] = buttons.build_game_action_buttons(
+            state.current_game.get(key), include_rule=False)
+    elif kind == 'all_left':
+        state.pending_buttons[key] = buttons.build_dissolve_buttons()
+    # 'announce' / 'terminate' 不挂按钮
 
 
 def cb_get_user_name(uid: str) -> str:
@@ -68,14 +97,13 @@ def cb_get_user_avatar_url(uid: str) -> str:
 # ──────── 文本发送 ────────────────────────────────────────────────────────
 
 def cb_send_text_message(target_id: str, is_uid: bool, msg: str):
-    """C++ → Python：发送文本消息（带配额管理 + 按钮接力续命）"""
-    key = helpers.target_key(target_id, is_uid)
-    extra_buttons = state.pending_buttons.pop(key, None)
-    # PENDING_GAME_ACTION sentinel:dispatcher 留下的「按发送时游戏名构造」标记。
-    # 此处刚好是 cb_match_announce 之后(同一次 HandleMessages 内 bridge 先调
-    # match_announce 再调 send_text_message),current_game[key] 已是最新值。
-    if extra_buttons == buttons.PENDING_GAME_ACTION:
-        extra_buttons = buttons.build_game_action_buttons(state.current_game.get(key))
+    """C++ → Python：发送文本消息（带配额管理 + 按钮接力续命）
+
+    本条回复要附的按钮（若有）已由 bridge 先调用 cb_match_event 写进
+    state.pending_buttons[key]——同一次 HandleMessages 内顺序调用,
+    GIL 保护下读写安全。
+    """
+    extra_buttons = state.pending_buttons.pop(helpers.target_key(target_id, is_uid), None)
     message_log.log_outgoing(target_id, is_uid, msg)
 
     async def _do():

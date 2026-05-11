@@ -97,17 +97,9 @@ async def lgtbot_dispatch(event, match):
             log.warning(f'菜单回复失败: {e}')
         return
 
-    # 命令检测：执行 /新游戏 /加入 /随机游戏 时，给 LGTBot 下一条文本回复附操作按钮。
-    # 这里只放标记（buttons.PENDING_GAME_ACTION），真正按钮组在 callbacks
-    # 发送时再按 state.current_game[key] 现场构造——游戏名是 C++ 桥接层在
-    # 同一次回复里通过 cb_match_announce 异步上报的（解析 BriefInfo 中
-    # 「游戏名称：X」标记），延后构造能保证按钮拿到的是最新游戏名。
-    if buttons.GAME_ACTION_RE.match(content):
-        target = gid if (event.is_group and gid) else uid
-        if target:
-            is_uid = not (event.is_group and gid)
-            key = helpers.target_key(target, is_uid)
-            state.pending_buttons[key] = buttons.PENDING_GAME_ACTION
+    # 按钮附加完全交给 C++ 桥接层根据消息内容判断（见
+    # LGTBot_ElainaBot.cc::ClassifyMatchEvent）—— 此处不再做命令模式匹配,
+    # 这样 /新游戏 触发的「先解散后新建」两条消息也不会把按钮挂错位置。
 
     message_log.log_incoming(uid, gid if event.is_group else '', content)
 

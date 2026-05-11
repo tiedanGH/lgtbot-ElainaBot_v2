@@ -25,7 +25,7 @@ PyObject* g_get_user_name     = nullptr;
 PyObject* g_get_user_avatar_url = nullptr;
 PyObject* g_send_text_message = nullptr;
 PyObject* g_send_image_message = nullptr;
-PyObject* g_match_announce    = nullptr;
+PyObject* g_match_event       = nullptr;
 
 // ──── GIL 辅助 RAII ──────────────────────────────────────────────────────
 class AcquireGIL {
@@ -45,6 +45,84 @@ private:
 };
 
 // ──── 回调实现 ────────────────────────────────────────────────────────────
+
+/**
+ * ClassifyMatchEvent — 从单次 Boardcast 合并后的 content 推断本条消息所对应
+ * 的房间事件类型,Python 据此挂相应的按钮组(/规则、加入/退出、游戏列表/创建房间)。
+ *
+ * 与上游 lgtbot UI 字符串耦合(本插件不改 lgtbot 子模块,只依赖契约级稳定文本):
+ *   "现在玩家可以..."       NewMatch 房间建立    -> "new_game"
+ *   "加入了游戏" + brief      Match::Request          -> "join_leave"
+ *   "退出了游戏" + brief      Match::Leave 等待中     -> "join_leave" 或 nullptr (最后一人,等下条 all_left)
+ *   "所有玩家都退出了游戏"   全员退出,房间解散       -> "all_left"
+ *   "所有玩家都强制退出..."  全员强制退出,房间解散   -> "all_left"
+ *   "游戏已解散"             Terminate(主动/新建前置) -> "terminate" (清状态,不挂按钮)
+ *   仅含 "游戏名称：X" 的其他 brief(/设置 成功等)    -> "announce" (只更新当前游戏名)
+ *   其余                                                -> nullptr (不调回调)
+ *
+ * out_game_name 同步取出 brief 顶上的「游戏名称：X」用作 /规则 按钮的参数。
+ */
+static const char* ClassifyMatchEvent(const std::string& content, std::string& out_game_name)
+{
+    static const std::string kAllLeft1 = "所有玩家都退出了游戏";
+    static const std::string kAllLeft2 = "所有玩家都强制退出了游戏";
+    static const std::string kTerminate = "游戏已解散";
+    static const std::string kNewMatch = "现在玩家可以";
+    static const std::string kJoined = "加入了游戏";
+    static const std::string kLeft = "退出了游戏";
+    static const std::string kGameNameMarker = "游戏名称：";
+    static const std::string kZeroUsers = "当前用户数：0";
+
+    out_game_name.clear();
+
+    // 1. 全员退出导致房间解散 —— 优先级高于「退出了游戏」单条匹配
+    if (content.find(kAllLeft1) != std::string::npos ||
+        content.find(kAllLeft2) != std::string::npos) {
+        return "all_left";
+    }
+
+    // 2. 主动/新建前置的 Terminate
+    if (content.find(kTerminate) != std::string::npos) {
+        return "terminate";
+    }
+
+    // 3. 以下事件都需要 brief 存在,顺带把游戏名拿出来
+    const size_t name_pos = content.find(kGameNameMarker);
+    if (name_pos == std::string::npos) {
+        return nullptr;
+    }
+    const size_t name_start = name_pos + kGameNameMarker.size();
+    const size_t name_end = content.find('\n', name_start);
+    out_game_name = (name_end == std::string::npos)
+        ? content.substr(name_start)
+        : content.substr(name_start, name_end - name_start);
+    if (out_game_name.empty()) {
+        return nullptr;
+    }
+
+    if (content.starts_with(kNewMatch)) {
+        return "new_game";
+    }
+    if (content.find(kJoined) != std::string::npos) {
+        return "join_leave";
+    }
+    if (content.find(kLeft) != std::string::npos) {
+        // "退出了游戏" 含义可能是「中途强制退出」(无 brief,已被 name_pos 拦截)
+        // 或「等待中退出」(有 brief)。后者若是最后一人,下一条消息会带 all_left
+        // 按钮,本条不再附,避免重复 / 玩家误点解散后的「加入」。
+        const size_t zpos = content.find(kZeroUsers);
+        if (zpos != std::string::npos) {
+            const size_t after = zpos + kZeroUsers.size();
+            if (after == content.size() || content[after] == '\n') {
+                return nullptr;
+            }
+        }
+        return "join_leave";
+    }
+
+    // brief 但非以上事件(如 /设置 成功),只用来刷新 Python 侧记下的游戏名
+    return "announce";
+}
 
 /**
  * HandleMessages — 将引擎消息列表合并为最少的对外发送
@@ -88,26 +166,16 @@ void HandleMessages(void* handler, const char* const id, const int is_uid,
     try {
         AcquireGIL a;
 
-        // 在分发文本/图片之前，扫描 BriefInfo 标记 "游戏名称：X\n"——
-        // lgtbot 在新建 / 加入 / 退出 / 设置改动 后都会 broadcast 一次 brief，
-        // 借此把当前 target 在玩什么游戏稳定地透传给 Python（state.current_game），
-        // 让「📜 规则」按钮即使是 /随机游戏 也能拿到正确游戏名。
-        // 标记字符串和上游 lgtbot/bot_core/match.cc::Match::BriefInfo_ 必须保持一致。
-        if (g_match_announce != nullptr) {
-            static const std::string kGameNameMarker = "\xe6\xb8\xb8\xe6\x88\x8f\xe5\x90\x8d\xe7\xa7\xb0\xef\xbc\x9a"; // "游戏名称："
-            const size_t marker_pos = content.find(kGameNameMarker);
-            if (marker_pos != std::string::npos) {
-                const size_t name_start = marker_pos + kGameNameMarker.size();
-                const size_t name_end = content.find('\n', name_start);
-                std::string game_name = (name_end == std::string::npos)
-                    ? content.substr(name_start)
-                    : content.substr(name_start, name_end - name_start);
-                if (!game_name.empty()) {
-                    try {
-                        boost::python::call<void>(g_match_announce, id, is_uid, game_name);
-                    } catch (...) {
-                        std::cerr << "[LGTBot_ElainaBot] match_announce dispatch failed" << std::endl;
-                    }
+        // 分类本条消息属于哪种房间事件,推断要附什么按钮 / 是否要清当前游戏名。
+        // ClassifyMatchEvent 返回 nullptr 时不调 Python(无需操作)。
+        if (g_match_event != nullptr) {
+            std::string game_name;
+            const char* kind = ClassifyMatchEvent(content, game_name);
+            if (kind != nullptr) {
+                try {
+                    boost::python::call<void>(g_match_event, id, is_uid, kind, game_name);
+                } catch (...) {
+                    std::cerr << "[LGTBot_ElainaBot] match_event dispatch failed" << std::endl;
                 }
             }
         }
@@ -229,7 +297,7 @@ bool Start(
         PyObject* get_user_avatar_url,
         PyObject* send_text_message,
         PyObject* send_image_message,
-        PyObject* match_announce)
+        PyObject* match_event)
 {
     ReleaseGIL r;
     const LGTBot_Option option {
@@ -249,7 +317,7 @@ bool Start(
     g_get_user_avatar_url = get_user_avatar_url;
     g_send_text_message  = send_text_message;
     g_send_image_message = send_image_message;
-    g_match_announce     = match_announce;
+    g_match_event        = match_event;
 
     const char* errmsg = nullptr;
     g_bot_core = LGTBot_Create(&option, &errmsg);
