@@ -35,9 +35,7 @@ def build_game_action_buttons(game_name: str | None = None,
     ]
     if include_rule and game_name:
         rows.append([
-            {'text': f'📜 《{game_name}》规则',
-             'data': f'/规则 {game_name}',
-             'type': 2, 'style': 4},
+            {'text': f'📖 《{game_name}》规则', 'data': f'/规则 {game_name}', 'type': 2, 'style': 4},
         ])
     return rows
 
@@ -53,6 +51,34 @@ def build_dissolve_buttons() -> list[list[dict]]:
     return [[
         {'text': '🎲 游戏列表', 'data': '/游戏列表', 'type': 2, 'style': 4},
         {'text': '🎮 创建房间', 'data': '/新游戏',  'type': 2, 'style': 1},
+    ]]
+
+
+# ──────── 未知指令引导(LGTBot_ElainaBot.cc::ClassifyMatchEvent 的 unknown_* 分支)──
+# 「元指令帮助」按钮发 `/帮助`(带斜杠,bot_core 元指令路径处理);
+# 「配置/游戏帮助」按钮发 `帮助`(不带斜杠,在 match 上下文里被分别解释为
+# 等待房间的配置帮助 / 进行中游戏的游戏帮助)。
+
+def build_unknown_meta_buttons() -> list[list[dict]]:
+    """场景 1:用户没参与游戏 / 已加入但不在本群 —— 只给元指令帮助。"""
+    return [[
+        {'text': '❓ 元指令帮助', 'data': '/帮助', 'type': 2, 'style': 1},
+    ]]
+
+
+def build_unknown_config_buttons() -> list[list[dict]]:
+    """场景 2:已在等待中的房间但用了未知的游戏配置 —— 配置帮助 + 元指令帮助。"""
+    return [[
+        {'text': '⚙️ 配置帮助', 'data': '帮助',  'type': 2, 'style': 4},
+        {'text': '❓ 元指令帮助', 'data': '/帮助', 'type': 2, 'style': 1},
+    ]]
+
+
+def build_unknown_game_buttons() -> list[list[dict]]:
+    """场景 3:游戏进行中,但用了未知的游戏指令 —— 游戏帮助 + 元指令帮助。"""
+    return [[
+        {'text': '🎮 游戏帮助', 'data': '帮助',  'type': 2, 'style': 4},
+        {'text': '❓ 元指令帮助', 'data': '/帮助', 'type': 2, 'style': 1},
     ]]
 
 # 单独 @ 机器人时回复的欢迎菜单按钮

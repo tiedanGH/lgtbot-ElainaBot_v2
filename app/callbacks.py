@@ -32,14 +32,17 @@ def cb_match_event(target_id: str, is_uid: bool, kind: str, game_name: str):
     bridge 端的分类逻辑见 ``LGTBot_ElainaBot.cc::ClassifyMatchEvent``;本侧只
     根据 ``kind`` 走 switch:
 
-      ``announce``   仅刷新 ``state.current_game[key]``(brief 出现但非
-                     新建/加入/退出场景,如 /设置 成功后的回执),不动按钮。
-      ``new_game``   刷新游戏名;在下一条文本回复挂「加入 / 退出 + 规则」。
-      ``join_leave`` 刷新游戏名;挂「加入 / 退出」(不含规则,玩家已在房中)。
-      ``all_left``   清空当前游戏名;挂「游戏列表 / 创建房间」引导。
-      ``terminate``  清空当前游戏名,不挂按钮(/新游戏 前置解散 / 管理员
-                     主动结束等场景,紧接着会有真正的新建消息覆盖,或就该
-                     安静收尾)。
+      ``announce``       仅刷新 ``state.current_game[key]``(brief 出现但非
+                         新建/加入/退出场景,如 /设置 成功后的回执),不动按钮。
+      ``new_game``       刷新游戏名;在下一条文本回复挂「加入 / 退出 + 规则」。
+      ``join_leave``     刷新游戏名;挂「加入 / 退出」(不含规则,玩家已在房中)。
+      ``all_left``       清空当前游戏名;挂「游戏列表 / 创建房间」引导。
+      ``terminate``      清空当前游戏名,不挂按钮(/新游戏 前置解散 / 管理员
+                         主动结束等场景,紧接着会有真正的新建消息覆盖,或就该
+                         安静收尾)。
+      ``unknown_meta``   未参与游戏 / 不在本群的游戏 —— 挂「元指令帮助」。
+      ``unknown_config`` 等待房间里输错配置 —— 挂「配置帮助 + 元指令帮助」。
+      ``unknown_game``   游戏进行中输错游戏指令 —— 挂「游戏帮助 + 元指令帮助」。
 
     所有按钮通过 ``state.pending_buttons[key]`` 暂存,被随后的
     ``cb_send_text_message`` pop 出来一次性附上(bridge 调本回调 → 再调
@@ -64,6 +67,12 @@ def cb_match_event(target_id: str, is_uid: bool, kind: str, game_name: str):
             state.current_game.get(key), include_rule=False)
     elif kind == 'all_left':
         state.pending_buttons[key] = buttons.build_dissolve_buttons()
+    elif kind == 'unknown_meta':
+        state.pending_buttons[key] = buttons.build_unknown_meta_buttons()
+    elif kind == 'unknown_config':
+        state.pending_buttons[key] = buttons.build_unknown_config_buttons()
+    elif kind == 'unknown_game':
+        state.pending_buttons[key] = buttons.build_unknown_game_buttons()
     # 'announce' / 'terminate' 不挂按钮
 
 

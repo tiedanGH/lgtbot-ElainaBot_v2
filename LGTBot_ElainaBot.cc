@@ -65,6 +65,9 @@ private:
  *   "所有玩家都退出了游戏"   全员退出,房间解散       -> "all_left"
  *   "所有玩家都强制退出..."  全员强制退出,房间解散   -> "all_left"
  *   "游戏已解散"             Terminate(主动/新建前置) -> "terminate" (清状态,不挂按钮)
+ *   "未预料的游戏设置"        房主输错游戏配置        -> "unknown_config" (配置帮助 + 元指令帮助)
+ *   "未预料的游戏指令"        游戏中玩家输错游戏指令  -> "unknown_game"   (游戏帮助 + 元指令帮助)
+ *   "若您想执行元指令" 兜底  未参与/未在本群参与游戏 -> "unknown_meta"   (仅元指令帮助)
  *   仅含 "游戏名称：X" 的其他 brief(/设置 成功等)    -> "announce" (只更新当前游戏名)
  *   其余                                                -> nullptr (不调回调)
  *
@@ -80,6 +83,14 @@ static const char* ClassifyMatchEvent(const std::string& content, std::string& o
     static const std::string kLeft = "退出了游戏";
     static const std::string kGameNameMarker = "游戏名称：";
     static const std::string kZeroUsers = "当前用户数：0";
+    // 未知指令引导(bot_core.cc HandleRequest / match.cc Request 三处错误回执):
+    //   "未预料的游戏设置"  房主在等待房间里输错配置
+    //   "未预料的游戏指令"  玩家在游戏中输错游戏指令
+    //   "若您想执行元指令"  全部三种错误都带的尾句,作为兜底捕获「未参与游戏 /
+    //                       未在本群参与游戏」两种 bot_core 层错误
+    static const std::string kUnknownConfig = "未预料的游戏设置";
+    static const std::string kUnknownGame   = "未预料的游戏指令";
+    static const std::string kUnknownMeta   = "若您想执行元指令";
 
     out_game_name.clear();
 
@@ -94,7 +105,19 @@ static const char* ClassifyMatchEvent(const std::string& content, std::string& o
         return "terminate";
     }
 
-    // 3. 以下事件都需要 brief 存在,顺带把游戏名拿出来
+    // 3. 未知指令分类 —— 顺序敏感:特化的 unknown_config / unknown_game 都
+    // 在尾部带了 unknown_meta 的兜底句,所以必须先匹配前两者再兜底
+    if (content.find(kUnknownConfig) != std::string::npos) {
+        return "unknown_config";
+    }
+    if (content.find(kUnknownGame) != std::string::npos) {
+        return "unknown_game";
+    }
+    if (content.find(kUnknownMeta) != std::string::npos) {
+        return "unknown_meta";
+    }
+
+    // 4. 以下事件都需要 brief 存在,顺带把游戏名拿出来
     const size_t name_pos = content.find(kGameNameMarker);
     if (name_pos == std::string::npos) {
         return nullptr;
