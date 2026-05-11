@@ -68,6 +68,7 @@ private:
  *   "未预料的游戏设置"        房主输错游戏配置        -> "unknown_config" (配置帮助 + 元指令帮助)
  *   "未预料的游戏指令"        游戏中玩家输错游戏指令  -> "unknown_game"   (游戏帮助 + 元指令帮助)
  *   "若您想执行元指令" 兜底  未参与/未在本群参与游戏 -> "unknown_meta"   (仅元指令帮助)
+ *   "LGTBot v" (前缀)         /关于 回执              -> "about"         (附两个仓库链接按钮)
  *   仅含 "游戏名称：X" 的其他 brief(/设置 成功等)    -> "announce" (只更新当前游戏名)
  *   其余                                                -> nullptr (不调回调)
  *
@@ -91,6 +92,10 @@ static const char* ClassifyMatchEvent(const std::string& content, std::string& o
     static const std::string kUnknownConfig = "未预料的游戏设置";
     static const std::string kUnknownGame   = "未预料的游戏指令";
     static const std::string kUnknownMeta   = "若您想执行元指令";
+    // /关于 命令的回执(message_handlers.cc::about) —— 其首句拼 "LGTBot " + LGTBot_Version()。版本号来自 `git describe --tags --always`
+    // tagged 构建形如 v1.0.0-N-gXXXX,合并后含 "LGTBot v" 子串。lgtbot 整个代码库其他用户输出路径都不会出现此前缀,做识别串足够稳定。
+    // (注:CMake 找不到 git tag 时会回退 <unpublished version>,无 v 前缀; 这是开发未提交场景,生产部署不会遇到。)
+    static const std::string kAbout = "LGTBot v";
 
     out_game_name.clear();
 
@@ -117,7 +122,12 @@ static const char* ClassifyMatchEvent(const std::string& content, std::string& o
         return "unknown_meta";
     }
 
-    // 4. 以下事件都需要 brief 存在,顺带把游戏名拿出来
+    // 4. /关于 回执 —— 附两个仓库链接按钮
+    if (content.find(kAbout) != std::string::npos) {
+        return "about";
+    }
+
+    // 5. 以下事件都需要 brief 存在,顺带把游戏名拿出来
     const size_t name_pos = content.find(kGameNameMarker);
     if (name_pos == std::string::npos) {
         return nullptr;

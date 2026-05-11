@@ -81,6 +81,16 @@ def build_unknown_game_buttons() -> list[list[dict]]:
         {'text': '❓ 元指令帮助', 'data': '/帮助', 'type': 2, 'style': 1},
     ]]
 
+
+def build_about_buttons() -> list[list[dict]]:
+    """/关于 回执底部附:左 适配层仓库,右 LGT-Bot 上游仓库。两个都是链接按钮
+    (type=0,QQ 协议下点击直接跳转,无 style)。
+    """
+    return [[
+        {'text': '适配层 仓库',  'link': 'https://github.com/tiedanGH/LGTBot_ElainaBot'},
+        {'text': 'LGT-Bot 仓库', 'link': 'https://github.com/Slontia/lgtbot'},
+    ]]
+
 # 单独 @ 机器人时回复的欢迎菜单按钮
 MENU_BUTTONS = [
     [
