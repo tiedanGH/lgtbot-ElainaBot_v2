@@ -8,7 +8,9 @@
 
 from __future__ import annotations
 import os
+import sys
 import time
+import asyncio
 import threading
 
 from core.plugin.decorators import handler
@@ -145,3 +147,59 @@ async def lgtbot_interaction_relay(event, match):
     if event.user_id:
         quota.refresh_ref(helpers.target_key(event.user_id, True),
                           'event_id', event.event_id, appid_str)
+
+
+# ──────── 主人专属:本插件全套重启指令 ────────────────────────────────────
+# 触发文本 "/重启"(框架自动剥前导 /，regex 不带 / 同样匹配 "重启")。
+# `owner_only=True` 框架内置:非主人触发时直接回 owner_only 模板,不进函数体。
+# 与系统插件的 /框架重启 实现一致(都是 os.execv 自身),区别仅在:
+#   1. 命令名是本插件命名空间下的「重启」(LGTBot_ElainaBot 禁用时不存在)
+#   2. exec 前会原子检查是否有进行中的 LGTBot 对局,有则拒绝重启
+#
+# 为什么必须 exec 而不是 plugin_manager.reload:CPython 扩展模块一经 import
+# 就常驻 sys.modules,plugin 热重载只重跑 Python 装饰器、并不 dlclose
+# LGTBot_ElainaBot.so;同样,libbot_core.so 与各 libgame.so 一经引擎 dlopen
+# 也驻留进程。要让重编的 C++ 二进制真正生效,只能换一个全新 Python 进程。
+
+@handler(r'^重启$',
+         name='LGTBot 插件重启',
+         owner_only=True,
+         event_types=_LGT_MSG_EVENTS,
+         priority=100)
+async def lgtbot_restart(event, match):
+    """主人发起的本插件「全套」重启 —— exec 整个 Python 进程,把 bridge .so /
+    libbot_core.so / 全部 libgame.so 重新 dlopen,等价于让 build.sh 重编后的
+    C++ 二进制即刻生效。
+
+    安全策略:复用 ``release_bot_if_not_processing_games`` 的原子语义 ——
+      · 有进行中 match → 引擎不释放,函数返回 False → 回拒绝信息,不 exec
+      · 无活跃 match → 引擎被干净释放并返回 True → 正好顺势 exec 整个进程
+    """
+    if not boot.LGTBOT_AVAILABLE:
+        await event.reply('ℹ️ LGTBot 引擎未加载，无需重启。')
+        return
+
+    if not boot.LGTBot_ElainaBot.release_bot_if_not_processing_games():
+        await event.reply('⚠️ 当前存在进行中的游戏，请等待对局结束。')
+        return
+
+    # 引擎已被干净释放。下面 exec 成功则进程整体被替换,本协程不会回到这里;
+    # 仅在 execv 失败(罕见:解释器二进制丢失)才会落到 except 分支。
+    state.started = False
+    boot.mark_engine_running(False)
+
+    await event.reply('🔁 LGTBot 正在重启…')
+    # 0.5s 让上面 reply 的 webhook 同步回复完成网络往返再 exec,避免 reply
+    # 还在飞就把 Python 替换了导致客户端看不到回执(与系统插件 /框架重启 同样的 0.5s 节流)。
+    await asyncio.sleep(0.5)
+
+    try:
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+    except Exception as e:
+        # execv 失败 → 进程仍存活但引擎已释放,无法干净恢复。控制台 log 留详情,
+        # 群里只给玩家一句简短回执(不暴露异常文本)指引去看控制台。
+        log.error(f'os.execv 重启失败,引擎已释放但进程未替换,需手动重启: {e}')
+        try:
+            await event.reply('❌ 重启时发生错误，引擎已释放但进程未替换，需手动重启，详情请查看控制台日志。')
+        except Exception:
+            pass
