@@ -89,12 +89,40 @@ _HTML_TEMPLATE = '''<!DOCTYPE html>
     }
 
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { background: var(--bg); color: var(--text); }
+    html { height: 100%; background: var(--bg); color: var(--text); }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      padding: 24px; min-height: 100vh;
+      padding: 0; margin: 0; height: 100vh;
+      display: flex; flex-direction: column;
+      background: var(--bg); color: var(--text);
+      overflow: hidden;       /* body 不滚 */
       transition: background .25s, color .25s;
     }
+
+    /* ───── 顶部锁定区 + 内容滚动区 ─────
+       通过 flex 布局让顶部条 (flex:0 0 auto) 占用自己的高度,内容区
+       (flex:1 + overflow-y:auto) 吃掉剩下的视口高度并成为唯一的滚动容器。
+       这样滚动条出现在 .page-content 内部,而不是整个 iframe / 视口。
+       视觉效果跟之前 position:sticky 一致(顶部条始终可见),但语义干净
+       —— sticky-top 物理上就在滚动元素之外,无须 sticky 黑科技。 */
+    .sticky-top {
+      flex: 0 0 auto;
+      background: var(--bg);
+      padding: 24px 24px 0;
+      box-shadow: 0 4px 8px -8px rgba(0, 0, 0, .2);
+    }
+    .page-content {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      padding: 0 24px 24px;
+    }
+    .page-content::-webkit-scrollbar { width: 8px; }
+    .page-content::-webkit-scrollbar-track { background: var(--scroll-track); }
+    .page-content::-webkit-scrollbar-thumb {
+      background: var(--scroll-thumb); border-radius: 4px;
+    }
+    .page-content::-webkit-scrollbar-thumb:hover { background: var(--border-2); }
+    .page-content { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) var(--scroll-track); }
 
     /* ───── 顶部标题栏 ───── */
     .topbar {
@@ -235,6 +263,19 @@ _HTML_TEMPLATE = '''<!DOCTYPE html>
     }
     .users-toolbar #users-refresh:disabled { opacity: .5; cursor: wait; }
 
+    /* 搜索框(放在工具栏中间,可同时匹配 name / openid)*/
+    .users-toolbar #users-search {
+      background: var(--panel); border: 1px solid var(--border); color: var(--text);
+      padding: 5px 10px; border-radius: 6px; font-size: 12px;
+      min-width: 220px; max-width: 320px; flex: 0 1 280px;
+      transition: border-color .15s, background .15s;
+    }
+    .users-toolbar #users-search::placeholder { color: var(--text-faint); }
+    .users-toolbar #users-search:focus {
+      border-color: var(--accent); outline: none;
+      background: var(--panel);
+    }
+
     /* 用户列表网格(默认 1 列,屏幕够宽时变 2 列)
        关键:.users-section-right 的 base "display: none" 必须放在 @media 之前;
        两条规则同特异性 (0,1,0),后写者赢 —— 若 base 放在 @media 后,即便
@@ -304,22 +345,26 @@ _HTML_TEMPLATE = '''<!DOCTYPE html>
   </style>
 </head>
 <body>
-  <div class="topbar">
-    <h1>LGTBot 机器人 <span class="badge" id="live-badge">实时</span></h1>
-    <button id="restart-btn" class="restart-btn" title="重启 LGTBot 引擎 (整进程重载 C++)">🔁 重启 LGTBot</button>
+  <div class="sticky-top">
+    <div class="topbar">
+      <h1>LGTBot 机器人 <span class="badge" id="live-badge">实时</span></h1>
+      <button id="restart-btn" class="restart-btn" title="重启 LGTBot 引擎 (整进程重载 C++)">🔁 重启 LGTBot</button>
+    </div>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="logs">📜 消息日志</button>
+      <button class="tab" data-tab="users">👥 用户数据</button>
+    </div>
   </div>
 
-  <div class="tabs">
-    <button class="tab active" data-tab="logs">📜 消息日志</button>
-    <button class="tab" data-tab="users">👥 用户数据</button>
-  </div>
-
-  <div id="tab-logs" class="tab-pane active">
+  <div class="page-content">
+    <div id="tab-logs" class="tab-pane active">
 __LOGS_HTML__
-  </div>
+    </div>
 
-  <div id="tab-users" class="tab-pane">
+    <div id="tab-users" class="tab-pane">
 __USERS_HTML__
+    </div>
   </div>
 
   <script id="log-data" type="application/json">__LOG_DATA__</script>

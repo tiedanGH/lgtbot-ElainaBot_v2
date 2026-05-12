@@ -34,6 +34,8 @@ TAB_HTML = '''
 <div class="users-toolbar">
   <span class="query-time-wrap">查询时间: <span id="users-query-time">—</span></span>
   <span class="spacer"></span>
+  <input type="text" id="users-search" placeholder="🔍 搜索昵称或 OpenID" autocomplete="off" spellcheck="false">
+  <span class="spacer"></span>
   <div class="pagination">
     <button id="users-prev" title="上一页">‹</button>
     <input type="number" id="users-page-input" min="1" value="1" title="输入页码跳转">
@@ -80,8 +82,18 @@ let usersPage = 1;
 const usersWideMQ = window.matchMedia('(min-width: 1200px)');
 
 function usersPageSize() { return usersWideMQ.matches ? 100 : 50; }
+
+/* 当前搜索查询(空字符串 = 不过滤)。同时匹配 name 与 openid,大小写无关。 */
+function usersFiltered() {
+  const q = (document.getElementById('users-search').value || '').toLowerCase().trim();
+  if (!q) return usersCache;
+  return usersCache.filter(u =>
+    (u.name || '').toLowerCase().includes(q) ||
+    (u.openid || '').toLowerCase().includes(q)
+  );
+}
 function usersTotalPages() {
-  return Math.max(1, Math.ceil(usersCache.length / usersPageSize()));
+  return Math.max(1, Math.ceil(usersFiltered().length / usersPageSize()));
 }
 
 function usersFmtDateTime(ts) {
@@ -127,8 +139,10 @@ function usersRender() {
   /* 查询时间始终更新 */
   document.getElementById('users-query-time').textContent = usersFmtDateTime(usersQueryTs);
 
-  /* 分页:钳位、刷 UI */
-  const total = usersTotalPages();
+  const filtered = usersFiltered();
+
+  /* 分页:钳位、刷 UI(基于「过滤后」的列表) */
+  const total = Math.max(1, Math.ceil(filtered.length / usersPageSize()));
   if (usersPage > total) usersPage = total;
   if (usersPage < 1) usersPage = 1;
   document.getElementById('users-page-input').value = usersPage;
@@ -139,31 +153,27 @@ function usersRender() {
   const list1 = document.getElementById('users-list-1');
   const list2 = document.getElementById('users-list-2');
 
-  if (!usersCache.length) {
-    list1.innerHTML = '<div class="user-row empty">暂无用户数据</div>';
+  if (!filtered.length) {
+    const msg = usersCache.length ? '无匹配结果' : '暂无用户数据';
+    list1.innerHTML = '<div class="user-row empty">' + msg + '</div>';
     list2.innerHTML = '';
     return;
   }
 
   const pageSize = usersPageSize();
   const start = (usersPage - 1) * pageSize;
-  const slice = usersCache.slice(start, start + pageSize);
+  const slice = filtered.slice(start, start + pageSize);
 
   if (usersWideMQ.matches) {
-    /* 2 列模式:按 index 奇偶拆,即第 0/2/4 …→ 左列,1/3/5 …→ 右列。
-       因为 list_users 已按 last_seen 降序,所以视觉上左上最新,然后右上,然后
-       左二行,然后右二行 …… 满足「从左到右从上到下排列活跃时间」。
-       序号 = 在完整列表里的全局名次 = start + 本页内 index + 1。 */
-    const leftHtml = [];
-    const rightHtml = [];
-    slice.forEach((u, i) => {
-      const serial = start + i + 1;
-      const row = usersRowHtml(u, serial);
-      if (i % 2 === 0) leftHtml.push(row);
-      else rightHtml.push(row);
-    });
-    list1.innerHTML = leftHtml.join('');
-    list2.innerHTML = rightHtml.join('');
+    /* 2 列模式:先把左列填满前 50 个,剩下的再去右列(不是奇偶交错)。
+       序号 = 在过滤后列表中的全局名次 = start + 本页内 index + 1。 */
+    const half = Math.floor(pageSize / 2);  // 100 / 2 = 50
+    const left = slice.slice(0, half);
+    const right = slice.slice(half);
+    list1.innerHTML = left.map((u, i) =>
+      usersRowHtml(u, start + i + 1)).join('');
+    list2.innerHTML = right.map((u, i) =>
+      usersRowHtml(u, start + half + i + 1)).join('');
   } else {
     list1.innerHTML = slice.map((u, i) => usersRowHtml(u, start + i + 1)).join('');
     list2.innerHTML = '';
@@ -205,6 +215,13 @@ document.getElementById('users-page-input').addEventListener('change', (e) => {
   if (!isNaN(v)) { usersPage = v; usersRender(); }
 });
 document.getElementById('users-refresh').addEventListener('click', usersRefresh);
+
+/* 搜索:input 事件每次按键都触发,数据量 < 1000 时性能足够;每次输入回到
+   第 1 页,免得「上一页之后又输入新关键字,结果空白」。 */
+document.getElementById('users-search').addEventListener('input', () => {
+  usersPage = 1;
+  usersRender();
+});
 
 /* 屏幕跨过 1200px 阈值时重排(2 列 ⇄ 1 列,每页容量也会变)。
    matchMedia 比 resize 监听更节流,只在阈值翻转时触发。 */
