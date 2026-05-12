@@ -42,7 +42,8 @@ _state.plugin_ctx = _ctx_mod.ctx
 # 其他模块依赖 boot.LGTBot_ElainaBot / boot.BUILD_DIR / boot.LGTBOT_AVAILABLE 等
 from plugins.LGTBot_ElainaBot.app import boot              # noqa: F401  C++ 引擎与路径
 from plugins.LGTBot_ElainaBot.app import userdb            # noqa: F401  用户昵称 / 头像 SQLite
-from plugins.LGTBot_ElainaBot.app.webui import message_log # noqa: F401  Web 面板侧边栏页面
+from plugins.LGTBot_ElainaBot.app.webui import main as webui  # noqa: F401  Web 面板侧边栏页面入口
+from plugins.LGTBot_ElainaBot.app.webui import message_log # noqa: F401  日志缓冲(callbacks / dispatcher 直接调用)
 from plugins.LGTBot_ElainaBot.app import dispatcher        # noqa: F401  @handler 注册（消息派发 + INTERACTION）
 from plugins.LGTBot_ElainaBot.app import callbacks         # C++ 回调（被 LGTBot_ElainaBot.start 注入）
 from plugins.LGTBot_ElainaBot.app import config as _config
@@ -55,7 +56,7 @@ log = get_logger(PLUGIN, 'LGTBot')
 @on_load
 async def _setup():
     # 注册 Web 面板拓展页（无论 LGTBot 是否可用，让用户先能看到日志页）
-    message_log.register()
+    webui.register()
 
     # 加载 / 创建配置（让 Web UI「插件 → 配置」入口立刻可见 config.yaml）
     admins = _config.load_plugin_config()
@@ -130,7 +131,7 @@ async def _setup():
 @on_unload
 async def _teardown():
     # userdb：先停 flusher，再同步 flush 一次 pending 到盘，最后关连接。
-    # 任何 SQLite 异常吞掉，避免阻断后续 message_log.unregister / 引擎释放
+    # 任何 SQLite 异常吞掉，避免阻断后续 webui.unregister / 引擎释放
     try:
         userdb.stop_flusher()
         userdb.flush_now()
@@ -139,7 +140,7 @@ async def _teardown():
 
     # 注销 Web 面板页面（无论引擎状态如何）
     try:
-        message_log.unregister()
+        webui.unregister()
     except Exception:
         pass
 

@@ -212,7 +212,7 @@ def schedule_exec_after(delay: float = 0.5, on_failure=None) -> None:
 # ──────── 主人专属:本插件全套重启指令 ────────────────────────────────────
 # 触发文本 "/重启"(框架自动剥前导 /，regex 不带 / 同样匹配 "重启")。
 # `owner_only=True` 框架内置:非主人触发时直接回 owner_only 模板,不进函数体。
-# WebUI 重启按钮也走同一对 helper —— 见 webui/message_log.py::_render_restart。
+# WebUI 重启按钮也走同一对 helper —— 见 webui/main.py::_render_restart。
 
 @handler(r'^重启$',
          name='LGTBot 插件重启',

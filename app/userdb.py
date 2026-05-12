@@ -134,6 +134,44 @@ def get_avatar(openid: str) -> str:
         return ''
 
 
+def list_users(limit: int = 1000) -> list[dict]:
+    """列出所有缓存用户(按 last_seen 倒序)。合并 ``_pending`` 中尚未落盘的条目。
+
+    返回列表元素: ``{'openid', 'name', 'avatar', 'last_seen'}``。
+    无 DB 连接时降级到仅返回 ``_pending``;DB 异常时也仅返回 pending。
+    供 WebUI「用户数据」面板使用,limit 默认 1000 防止极端场景下网页过大。
+    """
+    now = int(time.time())
+    rows: dict[str, dict] = {}
+    if _conn is not None:
+        try:
+            cur = _conn.execute(
+                'SELECT openid, name, avatar, last_seen FROM user_cache '
+                'ORDER BY last_seen DESC LIMIT ?',
+                (limit,))
+            for r in cur.fetchall():
+                rows[r[0]] = {
+                    'openid': r[0],
+                    'name': r[1] or '',
+                    'avatar': r[2] or '',
+                    'last_seen': r[3] or 0,
+                }
+        except Exception as e:
+            log.debug(f'userdb.list_users 异常: {e}')
+    # 合并 _pending —— pending 比 DB 新,非空字段覆盖;并把 last_seen 拉到 now
+    for uid, e in _pending.items():
+        slot = rows.setdefault(uid, {
+            'openid': uid, 'name': '', 'avatar': '', 'last_seen': 0,
+        })
+        if e['name']:
+            slot['name'] = e['name']
+        if e['avatar']:
+            slot['avatar'] = e['avatar']
+        if slot['last_seen'] < now:
+            slot['last_seen'] = now
+    return sorted(rows.values(), key=lambda r: -r['last_seen'])[:limit]
+
+
 # ──────── 写路径 ──────────────────────────────────────────────────────────
 
 def mark_dirty(openid: str, *, name: str = '', avatar: str = '') -> None:

@@ -88,7 +88,7 @@ cd ../.. && python3 main.py
 | **欢迎菜单**        | 单独 @机器人时回复模板菜单，含「帮助 / 游戏列表 / 排行大图 / 战绩」等按钮                                                         |
 | **菜单 logo**     | 仓库自带图片作为欢迎菜单顶部图（依赖图床上传，URL 进程内缓存 23h）                                                              |
 | **昵称持久化**       | 将 username + 头像 URL 落盘 `data/user_cache.db`（SQLite + WAL，5 min 批量 flush），离线用户在排行榜里仍能正确显示昵称         |
-| **Web 面板拓展页**   | 侧边栏「LGTBot 机器人」：消息日志 + 页面主题 + 收发/群私多维过滤 + 自动刷新                                                     |
+| **Web 面板拓展页**   | 侧边栏「LGTBot 机器人」单页多标签：消息日志（收发/群私过滤 + 自动刷新 + 主题）/ 用户数据（昵称头像表）+ 标题栏「🔁 重启 LGTBot」一键整进程重载 |
 | **在线配置**        | `data/config.yaml` 在 Web 面板「插件 → 配置」可直接编辑保存                                                        |
 | **优雅退出**        | 进行中对局拒绝释放引擎，避免数据丢失                                                                                 |
 
@@ -129,9 +129,12 @@ plugins/LGTBot_ElainaBot/
 │   ├── config.py            data/config.yaml 读写
 │   ├── userdb.py            用户昵称 / 头像 SQLite 持久化（5 min 批量 flush）
 │   ├── uploader.py          图床上传调度（COS / B站）+ 图片尺寸解析
-│   └── webui/               Web 面板拓展页（侧边栏「LGTBot 机器人」）
+│   └── webui/               Web 面板拓展页（侧边栏「LGTBot 机器人」/ 多标签）
 │       ├── __init__.py
-│       └── message_log.py   消息日志页（日志缓冲 + HTML 模板 + 懒渲染注册）
+│       ├── main.py          入口：页面注册 + 主骨架（标题栏 / 重启按钮 / 标签导航 / 公共 CSS+JS）
+│       ├── message_log.py   日志缓冲（log_incoming / log_outgoing / get_logs）
+│       ├── page_logs.py     「消息日志」标签内容 + 数据生成
+│       └── page_users.py    「用户数据」标签内容 + 数据生成（查 user_cache.db）
 │
 ├── images/                  仓库内置静态资源
 │   └── logo_transparent_colorful.png   欢迎菜单顶部 logo
