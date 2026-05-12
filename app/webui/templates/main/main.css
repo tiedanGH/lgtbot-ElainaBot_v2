@@ -283,7 +283,6 @@ body {
 .users-header .header-row > div {
   padding: 8px 12px; text-align: center;
 }
-.users-header .header-row .col-user { text-align: left; }
 
 /* 用户行 */
 .user-row {
