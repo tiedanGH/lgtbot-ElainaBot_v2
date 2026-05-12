@@ -1,0 +1,320 @@
+/* ───── 主题变量 ───── */
+:root[data-theme="light"] {
+  --bg: #f6f7fb;
+  --panel: #ffffff;
+  --panel-2: #fafbff;
+  --border: #e6e8f0;
+  --border-2: #d9dce8;
+  --text: #1f2433;
+  --text-muted: #6b7280;
+  --text-faint: #9aa1ad;
+  --accent: #5b6ee8;
+  --accent-text: #ffffff;
+  --in: #1f9d55;
+  --out: #1d6fdc;
+  --img: #e08600;
+  --tag-bg: #eef0f7;
+  --tag-text: #4a5160;
+  --hover: #eef1f9;
+  --shadow: 0 1px 3px rgba(20, 30, 60, .06);
+  --scroll-track: #f0f1f6;
+  --scroll-thumb: #cdd2e0;
+}
+:root[data-theme="dark"] {
+  --bg: #0f0f23;
+  --panel: #1a1a2e;
+  --panel-2: #15152a;
+  --border: #2a2a3e;
+  --border-2: #3a3a5e;
+  --text: #e0e0e0;
+  --text-muted: #a0a3ae;
+  --text-faint: #6b6f7e;
+  --accent: #7c8aff;
+  --accent-text: #ffffff;
+  --in: #4caf50;
+  --out: #2196f3;
+  --img: #ff9800;
+  --tag-bg: #2a2a3e;
+  --tag-text: #aab0c4;
+  --hover: #22223e;
+  --shadow: 0 1px 3px rgba(0, 0, 0, .3);
+  --scroll-track: #0f0f23;
+  --scroll-thumb: #3a3a5e;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { height: 100%; background: var(--bg); color: var(--text); }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  padding: 0; margin: 0; height: 100vh;
+  display: flex; flex-direction: column;
+  background: var(--bg); color: var(--text);
+  overflow: hidden;       /* body 不滚 */
+  transition: background .25s, color .25s;
+}
+
+/* ───── 顶部锁定区 + 内容滚动区 ─────
+   通过 flex 布局让顶部条 (flex:0 0 auto) 占用自己的高度,内容区
+   (flex:1 + overflow-y:auto) 吃掉剩下的视口高度并成为唯一的滚动容器。
+   滚动条出现在 .page-content 内部,而不是整个 iframe / 视口。 */
+.sticky-top {
+  flex: 0 0 auto;
+  background: var(--bg);
+  padding: 24px 24px 0;
+  box-shadow: 0 4px 8px -8px rgba(0, 0, 0, .2);
+}
+.page-content {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 0 24px 24px;
+}
+.page-content::-webkit-scrollbar { width: 8px; }
+.page-content::-webkit-scrollbar-track { background: var(--scroll-track); }
+.page-content::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb); border-radius: 4px;
+}
+.page-content::-webkit-scrollbar-thumb:hover { background: var(--border-2); }
+.page-content { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) var(--scroll-track); }
+
+/* ───── 顶部标题栏 ───── */
+.topbar {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 14px; gap: 16px; flex-wrap: wrap;
+}
+.topbar h1 { font-size: 18px; color: var(--accent); }
+.topbar .badge {
+  display: inline-block; padding: 1px 7px; border-radius: 3px; font-size: 10px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent); margin-left: 6px;
+}
+.restart-btn {
+  background: var(--panel); color: var(--text);
+  border: 1px solid var(--border); padding: 6px 14px; border-radius: 6px;
+  cursor: pointer; font-size: 13px;
+  transition: background .15s, border-color .15s, color .15s;
+}
+.restart-btn:hover { background: var(--hover); border-color: var(--border-2); }
+
+.topbar-actions {
+  display: flex; align-items: center; gap: 8px;
+}
+/* 通用图标按钮(主题切换等),32×32 方形带圆角 */
+.icon-btn {
+  background: var(--panel); color: var(--text);
+  border: 1px solid var(--border);
+  width: 32px; height: 32px;
+  padding: 0; border-radius: 6px;
+  cursor: pointer; font-size: 14px;
+  line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background .15s, border-color .15s;
+}
+.icon-btn:hover { background: var(--hover); border-color: var(--border-2); }
+
+/* ───── 标签导航 ───── */
+.tabs {
+  display: flex; gap: 4px; margin-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.tabs .tab {
+  background: transparent; border: none; padding: 9px 18px;
+  cursor: pointer; font-size: 13px; color: var(--text-muted);
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+  transition: color .15s, border-color .15s;
+}
+.tabs .tab:hover { color: var(--text); }
+.tabs .tab.active {
+  color: var(--accent); border-bottom-color: var(--accent); font-weight: 600;
+}
+
+/* ───── 标签内容容器 ───── */
+.tab-pane { display: none; }
+.tab-pane.active { display: block; }
+
+/* ───── 子页面内顶部工具栏(.filters / .users-toolbar)二级吸顶 ─────
+   .page-content 是滚动容器,这两条 sticky 让各标签的顶部工具栏在
+   子页面内部滚动时也始终可见。z-index 比外层 .sticky-top(=10)低,
+   两者不在同一栈,实际不会重叠。背景必须不透明,否则滚过的内容会透出。 */
+.filters, .users-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--bg);
+  padding: 8px 0;
+  margin-bottom: 4px;
+}
+
+/* ───── 消息日志:filters & list ───── */
+.filters { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.filters button {
+  background: var(--panel); border: 1px solid var(--border); color: var(--text);
+  padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;
+  transition: background .15s, border-color .15s, color .15s;
+}
+.filters button:hover { background: var(--hover); border-color: var(--border-2); }
+.filters button.active {
+  background: var(--accent); color: var(--accent-text); border-color: var(--accent);
+}
+.filters .spacer { flex: 1; }
+.filters .stats { font-size: 12px; color: var(--text-muted); font-family: monospace; }
+
+.log-list {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+.log-row {
+  display: grid; grid-template-columns: 76px 56px 200px 1fr;
+  padding: 8px 12px; border-bottom: 1px solid var(--border); gap: 10px;
+  align-items: start; font-size: 12px;
+}
+.log-row:last-child { border-bottom: none; }
+.log-row:hover { background: var(--panel-2); }
+.log-row .time { color: var(--text-faint); font-family: 'Consolas', monospace; }
+.log-row .dir { font-weight: 600; font-size: 11px; }
+.log-row.in .dir { color: var(--in); }
+.log-row.out .dir { color: var(--out); }
+.log-row .who {
+  color: var(--text-muted); font-family: 'Consolas', monospace;
+  word-break: break-all; font-size: 11px;
+}
+.log-row .content {
+  color: var(--text); word-break: break-word;
+  white-space: pre-wrap; line-height: 1.5;
+}
+.log-row .img-mark { color: var(--img); font-weight: 600; }
+.log-row .kind-tag {
+  display: inline-block; padding: 0 5px; border-radius: 2px; font-size: 9px;
+  background: var(--tag-bg); color: var(--tag-text); margin-right: 4px;
+}
+.log-list .empty {
+  padding: 48px; text-align: center; color: var(--text-faint); font-size: 13px;
+}
+
+/* ───── 用户数据:toolbar / 分页 / 搜索 / 表格 ───── */
+.users-toolbar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.users-toolbar .query-time-wrap {
+  font-size: 12px; color: var(--text-muted);
+}
+.users-toolbar #users-query-time { font-family: monospace; color: var(--text); }
+.users-toolbar .spacer { flex: 1; }
+
+/* 分页控件(在「刷新数据」按钮左侧)*/
+.pagination {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 12px;
+}
+.pagination button {
+  background: var(--panel); border: 1px solid var(--border); color: var(--text);
+  width: 28px; height: 28px; border-radius: 6px; cursor: pointer;
+  font-size: 14px; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background .15s, border-color .15s;
+}
+.pagination button:hover:not(:disabled) {
+  background: var(--hover); border-color: var(--border-2);
+}
+.pagination button:disabled { opacity: .4; cursor: not-allowed; }
+.pagination input[type="number"] {
+  width: 48px; height: 28px; text-align: center;
+  background: var(--panel); border: 1px solid var(--border); color: var(--text);
+  border-radius: 6px; font-size: 12px;
+  -moz-appearance: textfield;
+}
+.pagination input[type="number"]::-webkit-outer-spin-button,
+.pagination input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none; margin: 0;
+}
+.pagination .page-total {
+  color: var(--text-muted); font-family: monospace; padding: 0 4px;
+}
+
+.users-toolbar #users-refresh {
+  background: var(--panel); border: 1px solid var(--border); color: var(--text);
+  padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;
+  transition: background .15s, border-color .15s;
+}
+.users-toolbar #users-refresh:hover {
+  background: var(--hover); border-color: var(--border-2);
+}
+.users-toolbar #users-refresh:disabled { opacity: .5; cursor: wait; }
+
+/* 搜索框(放在工具栏中间,可同时匹配 name / openid)*/
+.users-toolbar #users-search {
+  background: var(--panel); border: 1px solid var(--border); color: var(--text);
+  padding: 5px 10px; border-radius: 6px; font-size: 12px;
+  min-width: 220px; max-width: 320px; flex: 0 1 280px;
+  transition: border-color .15s, background .15s;
+}
+.users-toolbar #users-search::placeholder { color: var(--text-faint); }
+.users-toolbar #users-search:focus {
+  border-color: var(--accent); outline: none;
+  background: var(--panel);
+}
+
+/* 用户列表网格(默认 1 列,屏幕够宽时变 2 列)
+   关键:.users-section-right 的 base "display: none" 必须放在 @media 之前;
+   两条规则同特异性 (0,1,0),后写者赢 —— 若 base 放在 @media 后,即便
+   屏幕够宽,@media 里的 display:block 也会被 base 覆盖回 none,直接
+   表现为「2 列模式右侧不显示」。 */
+.users-grid {
+  display: grid; grid-template-columns: 1fr; gap: 16px;
+}
+.users-section-right { display: none; }
+@media (min-width: 1200px) {
+  .users-grid { grid-template-columns: 1fr 1fr; }
+  .users-section-right { display: block; }
+}
+
+.users-section {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  overflow: hidden; box-shadow: var(--shadow);
+}
+
+/* 表头:单行四列「序号 / 用户 / OpenID / 上次活跃」,列宽与 user-row 对齐 */
+.users-header {
+  background: var(--panel-2); color: var(--text-muted);
+  font-weight: 600; font-size: 11px;
+  border-bottom: 1px solid var(--border);
+}
+.users-header .header-row {
+  display: grid; grid-template-columns: 6% 30% 40% 24%;
+}
+.users-header .header-row > div {
+  padding: 8px 12px; text-align: center;
+}
+.users-header .header-row .col-user { text-align: left; }
+
+/* 用户行 */
+.user-row {
+  display: grid; grid-template-columns: 6% 30% 40% 24%;
+  align-items: center; padding: 6px 0;
+  border-bottom: 1px solid var(--border); font-size: 12px;
+  transition: background .15s;
+}
+.user-row:last-child { border-bottom: none; }
+.user-row:hover { background: var(--panel-2); }
+.user-row > div { padding: 4px 12px; }
+.user-row .col-idx {
+  text-align: center; color: var(--text-muted); font-family: monospace;
+}
+.user-row .col-user {
+  display: flex; align-items: center; gap: 10px;
+  word-break: break-word; min-width: 0;
+}
+.user-row .col-user .user-name { min-width: 0; word-break: break-word; }
+.user-row .col-openid {
+  text-align: center; font-family: monospace; word-break: break-all;
+}
+.user-row .col-seen {
+  text-align: center; font-family: monospace; color: var(--text-muted);
+  word-break: keep-all;
+}
+.user-row .avatar-img {
+  width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+  background: var(--panel-2); border: 1px solid var(--border); object-fit: cover;
+}
+.user-row.empty {
+  grid-template-columns: 1fr;
+  text-align: center; color: var(--text-faint); padding: 36px !important;
+}

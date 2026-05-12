@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <title>LGTBot 机器人</title>
+  <style>
+__MAIN_CSS__
+  </style>
+</head>
+<body>
+  <div class="sticky-top">
+    <div class="topbar">
+      <h1>LGTBot 机器人 <span class="badge" id="live-badge">实时</span></h1>
+      <div class="topbar-actions">
+        <button id="theme-toggle" class="icon-btn" title="切换主题">☀</button>
+        <button id="restart-btn" class="restart-btn" title="重启 LGTBot 引擎 (整进程重载 C++)">🔁 重启 LGTBot</button>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="logs">📜 消息日志</button>
+      <button class="tab" data-tab="users">👥 用户数据</button>
+    </div>
+  </div>
+
+  <div class="page-content">
+    <div id="tab-logs" class="tab-pane active">
+__LOGS_HTML__
+    </div>
+
+    <div id="tab-users" class="tab-pane">
+__USERS_HTML__
+    </div>
+  </div>
+
+  <script id="log-data" type="application/json">__LOG_DATA__</script>
+  <script id="user-data" type="application/json">__USER_DATA__</script>
+  <script>
+__MAIN_JS__
+
+__LOGS_JS__
+
+__USERS_JS__
+  </script>
+</body>
+</html>

@@ -131,10 +131,14 @@ plugins/LGTBot_ElainaBot/
 │   ├── uploader.py          图床上传调度（COS / B站）+ 图片尺寸解析
 │   └── webui/               Web 面板拓展页（侧边栏「LGTBot 机器人」/ 多标签）
 │       ├── __init__.py
-│       ├── main.py          入口：页面注册 + 主骨架（标题栏 / 重启按钮 / 标签导航 / 公共 CSS+JS）
+│       ├── main.py          入口：页面注册 + 主页面拼装（读 templates/ 并填充占位）
 │       ├── message_log.py   日志缓冲（log_incoming / log_outgoing / get_logs）
-│       ├── page_logs.py     「消息日志」标签内容 + 数据生成
-│       └── page_users.py    「用户数据」标签内容 + 数据生成（查 user_cache.db）
+│       ├── page_logs.py     「消息日志」标签 Python 逻辑（数据生成 + 模板加载）
+│       ├── page_users.py    「用户数据」标签 Python 逻辑（查 user_cache.db + 模板加载）
+│       └── templates/       前端模板（纯 HTML/CSS/JS,按功能分子目录）
+│           ├── main/        主骨架 / 全局 CSS / 公共 JS
+│           ├── logs/        「消息日志」标签 HTML+JS
+│           └── users/       「用户数据」标签 HTML+JS
 │
 ├── images/                  仓库内置静态资源
 │   └── logo_transparent_colorful.png   欢迎菜单顶部 logo

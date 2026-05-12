@@ -1,0 +1,38 @@
+<div class="users-toolbar">
+  <span class="query-time-wrap">查询时间: <span id="users-query-time">—</span></span>
+  <span class="spacer"></span>
+  <input type="text" id="users-search" placeholder="🔍 搜索昵称或 OpenID" autocomplete="off" spellcheck="false">
+  <span class="spacer"></span>
+  <div class="pagination">
+    <button id="users-prev" title="上一页">‹</button>
+    <input type="number" id="users-page-input" min="1" value="1" title="输入页码跳转">
+    <span class="page-total">/ <span id="users-page-total">1</span></span>
+    <button id="users-next" title="下一页">›</button>
+  </div>
+  <button id="users-refresh" title="重新查询用户数据库">🔄 刷新数据</button>
+</div>
+
+<div class="users-grid">
+  <div class="users-section">
+    <div class="users-header">
+      <div class="header-row">
+        <div class="col-idx">序号</div>
+        <div class="col-user">用户</div>
+        <div class="col-openid">OpenID</div>
+        <div class="col-seen">上次活跃</div>
+      </div>
+    </div>
+    <div id="users-list-1"></div>
+  </div>
+  <div class="users-section users-section-right">
+    <div class="users-header">
+      <div class="header-row">
+        <div class="col-idx">序号</div>
+        <div class="col-user">用户</div>
+        <div class="col-openid">OpenID</div>
+        <div class="col-seen">上次活跃</div>
+      </div>
+    </div>
+    <div id="users-list-2"></div>
+  </div>
+</div>
