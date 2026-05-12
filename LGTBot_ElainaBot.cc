@@ -69,6 +69,7 @@ private:
  *   "未预料的游戏指令"        游戏中玩家输错游戏指令  -> "unknown_game"   (游戏帮助 + 元指令帮助)
  *   "未预料的元指令"          / 开头的未知元指令       -> "unknown_meta"   (仅元指令帮助)
  *   "若您想执行元指令" 兜底  未参与/未在本群参与游戏 -> "unknown_meta"   (仅元指令帮助)
+ *   "未知的游戏名"            /新游戏 /规则 /设置 等误输游戏名 -> "unknown_game_name" (附「🎲 游戏列表」按钮)
  *   "LGTBot v" (前缀)         /关于 回执              -> "about"         (附两个仓库链接按钮)
  *   仅含 "游戏名称：X" 的其他 brief(/设置 成功等)    -> "announce" (只更新当前游戏名)
  *   其余                                                -> nullptr (不调回调)
@@ -92,10 +93,14 @@ static const char* ClassifyMatchEvent(const std::string& content, std::string& o
     //   "未预料的元指令"    输了一条 / 开头的未知元指令(HandleMetaRequest)
     //   "若您想执行元指令"  上面前三种之外、bot_core 层的「未参与游戏 / 未在
     //                       本群参与游戏」两类错误带的兜底尾句
-    static const std::string kUnknownConfig  = "未预料的游戏设置";
-    static const std::string kUnknownGame    = "未预料的游戏指令";
-    static const std::string kUnknownMetaCmd = "未预料的元指令";
-    static const std::string kUnknownMeta    = "若您想执行元指令";
+    static const std::string kUnknownConfig   = "未预料的游戏设置";
+    static const std::string kUnknownGame     = "未预料的游戏指令";
+    static const std::string kUnknownMetaCmd  = "未预料的元指令";
+    static const std::string kUnknownMeta     = "若您想执行元指令";
+    // 引擎里至少 9 处错误回执形如「[错误] 创建/查看/设置失败：未知的游戏名,
+    // 请通过「/游戏列表」查看游戏名称」(message_handlers.cc 的 new_game /
+    // show_rule / show_options / 等)。共用此 marker 同样附「🎲 游戏列表」按钮。
+    static const std::string kUnknownGameName = "未知的游戏名";
     // /关于 命令的回执(message_handlers.cc::about) —— 其首句拼 "LGTBot " + LGTBot_Version()。版本号来自 `git describe --tags --always`
     // tagged 构建形如 v1.0.0-N-gXXXX,合并后含 "LGTBot v" 子串。lgtbot 整个代码库其他用户输出路径都不会出现此前缀,做识别串足够稳定。
     // (注:CMake 找不到 git tag 时会回退 <unpublished version>,无 v 前缀; 这是开发未提交场景,生产部署不会遇到。)
@@ -125,6 +130,9 @@ static const char* ClassifyMatchEvent(const std::string& content, std::string& o
     if (content.find(kUnknownMetaCmd) != std::string::npos ||
         content.find(kUnknownMeta)    != std::string::npos) {
         return "unknown_meta";
+    }
+    if (content.find(kUnknownGameName) != std::string::npos) {
+        return "unknown_game_name";
     }
 
     // 4. /关于 回执 —— 附两个仓库链接按钮

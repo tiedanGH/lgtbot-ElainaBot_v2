@@ -85,6 +85,15 @@ def build_unknown_game_buttons() -> list[list[dict]]:
     ]]
 
 
+def build_game_list_buttons() -> list[list[dict]]:
+    """单按钮一行:「🎲 游戏列表」——与欢迎菜单同款。
+    用于 `/新游戏 X` / `/规则 X` / `/设置 X` 等误输游戏名时,引导用户查正确名字。
+    """
+    return [[
+        {'text': '🎲 游戏列表', 'data': '/游戏列表', 'type': 2, 'style': 4},
+    ]]
+
+
 def build_about_buttons() -> list[list[dict]]:
     """/关于 回执底部附:左 适配层仓库,右 LGT-Bot 上游仓库。两个都是链接按钮
     (type=0,QQ 协议下点击直接跳转,无 style)。

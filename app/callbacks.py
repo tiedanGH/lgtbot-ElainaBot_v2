@@ -41,10 +41,11 @@ def cb_match_event(target_id: str, is_uid: bool, kind: str, game_name: str):
       ``terminate``      清空当前游戏名,不挂按钮(/新游戏 前置解散 / 管理员
                          主动结束等场景,紧接着会有真正的新建消息覆盖,或就该
                          安静收尾)。
-      ``unknown_meta``   未参与游戏 / 不在本群的游戏 —— 挂「元指令帮助」。
-      ``unknown_config`` 等待房间里输错配置 —— 挂「配置帮助 + 元指令帮助」。
-      ``unknown_game``   游戏进行中输错游戏指令 —— 挂「游戏帮助 + 元指令帮助」。
-      ``about``          /关于 命令回执 —— 挂「适配层仓库 + LGT-Bot 仓库」链接按钮。
+      ``unknown_meta``       未参与游戏 / 不在本群的游戏 —— 挂「元指令帮助」。
+      ``unknown_config``     等待房间里输错配置 —— 挂「配置帮助 + 元指令帮助」。
+      ``unknown_game``       游戏进行中输错游戏指令 —— 挂「游戏帮助 + 元指令帮助」。
+      ``unknown_game_name``  /新游戏 / /规则 等误输游戏名 —— 挂「🎲 游戏列表」。
+      ``about``              /关于 命令回执 —— 挂「适配层仓库 + LGT-Bot 仓库」链接按钮。
 
     所有按钮通过 ``state.pending_buttons[key]`` 暂存,被随后的
     ``cb_send_text_message`` pop 出来一次性附上(bridge 调本回调 → 再调
@@ -81,6 +82,8 @@ def cb_match_event(target_id: str, is_uid: bool, kind: str, game_name: str):
         state.pending_buttons[key] = buttons.build_unknown_config_buttons()
     elif kind == 'unknown_game':
         state.pending_buttons[key] = buttons.build_unknown_game_buttons()
+    elif kind == 'unknown_game_name':
+        state.pending_buttons[key] = buttons.build_game_list_buttons()
     elif kind == 'about':
         state.pending_buttons[key] = buttons.build_about_buttons()
     # 'announce' / 'terminate' 不挂按钮
