@@ -194,10 +194,12 @@ body {
 .users-toolbar {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
 }
-.users-toolbar .query-time-wrap {
+.users-toolbar .query-time-wrap,
+.users-toolbar .users-total-wrap {
   font-size: 12px; color: var(--text-muted);
 }
-.users-toolbar #users-query-time { font-family: monospace; color: var(--text); }
+.users-toolbar #users-query-time,
+.users-toolbar #users-total { font-family: monospace; color: var(--text); }
 .users-toolbar .spacer { flex: 1; }
 
 /* 分页控件(在「刷新数据」按钮左侧)*/

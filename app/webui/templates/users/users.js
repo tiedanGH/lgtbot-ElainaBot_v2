@@ -1,5 +1,6 @@
 let usersCache = [];
 let usersQueryTs = 0;
+let usersTotal = 0;        // DB + pending 去重总数(独立于 usersCache 长度)
 let usersPage = 1;
 const usersWideMQ = window.matchMedia('(min-width: 1200px)');
 
@@ -49,6 +50,7 @@ function usersLoadInline() {
     const data = JSON.parse(document.getElementById('user-data').textContent);
     usersCache = data.users || [];
     usersQueryTs = data.query_time || 0;
+    usersTotal = data.total || 0;
     usersPage = 1;
     usersRender();
   } catch (e) {
@@ -58,8 +60,9 @@ function usersLoadInline() {
 }
 
 function usersRender() {
-  /* 查询时间始终更新 */
+  /* 顶部汇总:查询时间 + 总用户数 */
   document.getElementById('users-query-time').textContent = usersFmtDateTime(usersQueryTs);
+  document.getElementById('users-total').textContent = usersTotal;
 
   const filtered = usersFiltered();
 
@@ -114,6 +117,7 @@ async function usersRefresh() {
       const data = JSON.parse(m[1]);
       usersCache = data.users || [];
       usersQueryTs = data.query_time || 0;
+      usersTotal = data.total || 0;
       /* 刷新数据后回到第 1 页,语义上「重新查询」就应该看到最新顶部 */
       usersPage = 1;
       usersRender();

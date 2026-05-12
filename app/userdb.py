@@ -134,6 +134,32 @@ def get_avatar(openid: str) -> str:
         return ''
 
 
+def count_users() -> int:
+    """返回当前缓存用户总数(SQLite + ``_pending`` 合并去重)。
+
+    与 ``list_users`` 不同:本函数不取行数据、不受 limit 截断,直接给出
+    完整 cardinality,适合 WebUI 顶部「总用户: N」这种汇总数字。
+    SQL 异常时降级为 ``len(_pending)``,保证调用方拿到的总是合理数字。
+    """
+    if _conn is None:
+        return len(_pending)
+    try:
+        cur = _conn.execute('SELECT COUNT(*) FROM user_cache')
+        db_count = cur.fetchone()[0] or 0
+        if not _pending:
+            return db_count
+        # _pending 里可能有还没落盘的新 openid,跟 DB 不重叠的部分要加上
+        placeholders = ','.join('?' * len(_pending))
+        cur = _conn.execute(
+            f'SELECT COUNT(*) FROM user_cache WHERE openid IN ({placeholders})',
+            tuple(_pending.keys()))
+        overlap = cur.fetchone()[0] or 0
+        return db_count + len(_pending) - overlap
+    except Exception as e:
+        log.debug(f'userdb.count_users 异常: {e}')
+        return len(_pending)
+
+
 def list_users(limit: int = 1000) -> list[dict]:
     """列出所有缓存用户(按 last_seen 倒序)。合并 ``_pending`` 中尚未落盘的条目。
 
