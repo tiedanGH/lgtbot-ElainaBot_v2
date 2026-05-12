@@ -35,7 +35,8 @@ def cb_match_event(target_id: str, is_uid: bool, kind: str, game_name: str):
       ``announce``       仅刷新 ``state.current_game[key]``(brief 出现但非
                          新建/加入/退出场景,如 /设置 成功后的回执),不动按钮。
       ``new_game``       刷新游戏名;在下一条文本回复挂「加入 / 退出 + 规则」。
-      ``join_leave``     刷新游戏名;挂「加入 / 退出」(不含规则,玩家已在房中)。
+      ``join_leave``     刷新游戏名;同上挂「加入 / 退出 + 规则」(玩家加入/
+                         退出时也补一个规则按钮,方便随时查阅)。
       ``all_left``       清空当前游戏名;挂「游戏列表 / 创建房间」引导。
       ``terminate``      清空当前游戏名,不挂按钮(/新游戏 前置解散 / 管理员
                          主动结束等场景,紧接着会有真正的新建消息覆盖,或就该
@@ -59,22 +60,19 @@ def cb_match_event(target_id: str, is_uid: bool, kind: str, game_name: str):
     elif game_name:
         state.current_game[key] = game_name
 
-    # 按钮挂载 —— 私信场景(is_uid=True)的 /加入 /退出 按钮无意义,统一关掉:
-    #   · DM new_game   → 只挂规则按钮(若 game_name 已知)
-    #   · DM join_leave → 不挂任何按钮(空 brief 消息直发)
-    #   · 群聊行为不变
-    if kind == 'new_game':
+    # 按钮挂载 —— new_game / join_leave 都挂同样一组:
+    #   · 群聊:  「加入 / 退出」+ 「📖《X》规则」 两行
+    #   · 私聊:  仅「📖《X》规则」一行(DM 里 /加入 /退出 无意义,见 is_uid 分支)
+    # 私聊场景下 build_game_action_buttons 返回的若是空列表(game_name 未知的
+    # 极端情形),`if btns:` 跳过 pending_buttons 写入,避免给框架塞空按钮组。
+    if kind in ('new_game', 'join_leave'):
         btns = buttons.build_game_action_buttons(
             state.current_game.get(key),
             include_rule=True,
             include_join_leave=not is_uid,
         )
-        if btns:  # DM 且 game_name 未知 → 空列表,跳过 pending_buttons 写入
+        if btns:
             state.pending_buttons[key] = btns
-    elif kind == 'join_leave':
-        if not is_uid:
-            state.pending_buttons[key] = buttons.build_game_action_buttons(
-                state.current_game.get(key), include_rule=False)
     elif kind == 'all_left':
         state.pending_buttons[key] = buttons.build_dissolve_buttons()
     elif kind == 'unknown_meta':
