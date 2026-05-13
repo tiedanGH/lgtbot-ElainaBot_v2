@@ -14,6 +14,9 @@
   · 写路径走 ``mark_dirty(uid, name=, avatar=)`` → pending dict → 后台 asyncio
     任务每 5 分钟批量 UPSERT；dispatcher 不直接 INSERT，避免每条消息一次
     磁盘往返
+  · ``last_seen`` 在 ``mark_dirty`` 调用时刻记下并存入 pending；``flush_now``
+    只搬运不重写时间戳。这样 WebUI 看到的「上次活跃」就是用户真实发消息
+    的那一刻,而不是「上次 flush 周期跑完的整点」（旧实现的偏差最大 5 分钟）。
   · UPSERT 的 CASE 表达式保护：name / avatar 任一为空时不覆盖 DB 旧值
     （QQ 偶尔漏传 username 时不要把好不容易拿到的昵称擦掉）
   · 读路径：``get_name`` 直接 SELECT，主键查询 ~10–100µs，排行榜 50 次调用
@@ -35,7 +38,10 @@ log = get_logger(PLUGIN, 'LGTBot')
 
 _FLUSH_INTERVAL_S = 300.0      # 5 分钟批量落盘
 _conn: Optional[sqlite3.Connection] = None
-_pending: dict[str, dict] = {}  # uid → {'name','avatar'}（下次 flush 写入）
+# uid → {'name','avatar','last_seen'}（下次 flush 写入）
+# last_seen 在 mark_dirty 调用时刻就记下,不是 flush 时刻 —— 否则 WebUI 看到
+# 的「上次活跃」最多会比真实事件晚 5 分钟（一个完整 flush 周期）。
+_pending: dict[str, dict] = {}
 _flusher_task: Optional[asyncio.Task] = None
 
 
@@ -167,7 +173,6 @@ def list_users(limit: int = 1000) -> list[dict]:
     无 DB 连接时降级到仅返回 ``_pending``;DB 异常时也仅返回 pending。
     供 WebUI「用户数据」面板使用,limit 默认 1000 防止极端场景下网页过大。
     """
-    now = int(time.time())
     rows: dict[str, dict] = {}
     if _conn is not None:
         try:
@@ -184,7 +189,9 @@ def list_users(limit: int = 1000) -> list[dict]:
                 }
         except Exception as e:
             log.debug(f'userdb.list_users 异常: {e}')
-    # 合并 _pending —— pending 比 DB 新,非空字段覆盖;并把 last_seen 拉到 now
+    # 合并 _pending —— pending 比 DB 新,非空字段覆盖;last_seen 取 pending 中
+    # mark_dirty 时刻记下的真实事件时间,不再 bump 到「现在」(那样每次 WebUI
+    # 刷新都会把活跃时间拉到查询时刻,完全失真)。
     for uid, e in _pending.items():
         slot = rows.setdefault(uid, {
             'openid': uid, 'name': '', 'avatar': '', 'last_seen': 0,
@@ -193,8 +200,9 @@ def list_users(limit: int = 1000) -> list[dict]:
             slot['name'] = e['name']
         if e['avatar']:
             slot['avatar'] = e['avatar']
-        if slot['last_seen'] < now:
-            slot['last_seen'] = now
+        pend_ts = e.get('last_seen', 0)
+        if pend_ts > slot['last_seen']:
+            slot['last_seen'] = pend_ts
     return sorted(rows.values(), key=lambda r: -r['last_seen'])[:limit]
 
 
@@ -205,14 +213,20 @@ def mark_dirty(openid: str, *, name: str = '', avatar: str = '') -> None:
 
     name / avatar 为空表示「这次没有新值」—— 不覆盖 pending 已有值,
     SQL UPSERT 阶段也会再做一次空值保护(CASE 表达式)。
+
+    ``last_seen`` 每次调用都刷成「当前时刻」,即便 name/avatar 都为空也算
+    一次活跃事件(dispatcher 每条入站消息都会调一次本函数,这正是「上次
+    活跃时间」的语义)。
     """
-    if not openid or (not name and not avatar):
+    if not openid:
         return
-    entry = _pending.setdefault(openid, {'name': '', 'avatar': ''})
+    entry = _pending.setdefault(
+        openid, {'name': '', 'avatar': '', 'last_seen': 0})
     if name:
         entry['name'] = name
     if avatar:
         entry['avatar'] = avatar
+    entry['last_seen'] = int(time.time())
 
 
 def flush_now() -> None:
@@ -220,14 +234,17 @@ def flush_now() -> None:
 
     设计：先把 pending 整个换成空 dict,失败时再把 snapshot 合并回新 pending
     （而非整体覆盖），避免与失败期间新到的 mark_dirty 互相覆盖。
+
+    ``last_seen`` 用 pending 里 mark_dirty 时刻记下的值,不是 flush 时刻 ——
+    这样真实事件时间不会被批量落盘的整点对齐抹掉。
     """
     global _pending
     if _conn is None or not _pending:
         return
     snapshot = _pending
     _pending = {}
-    now = int(time.time())
-    rows = [(uid, e['name'], e['avatar'], now) for uid, e in snapshot.items()]
+    rows = [(uid, e['name'], e['avatar'], e.get('last_seen') or 0)
+            for uid, e in snapshot.items()]
     try:
         _conn.execute('BEGIN')
         _conn.executemany(_UPSERT_SQL, rows)
@@ -238,11 +255,16 @@ def flush_now() -> None:
         except Exception:
             pass
         for uid, ent in snapshot.items():
-            slot = _pending.setdefault(uid, {'name': '', 'avatar': ''})
+            slot = _pending.setdefault(
+                uid, {'name': '', 'avatar': '', 'last_seen': 0})
             if ent['name']:
                 slot['name'] = ent['name']
             if ent['avatar']:
                 slot['avatar'] = ent['avatar']
+            # last_seen 取较大值:失败期间可能又有新 mark_dirty 进来
+            ent_ts = ent.get('last_seen') or 0
+            if ent_ts > slot['last_seen']:
+                slot['last_seen'] = ent_ts
         log.warning(f'userdb flush 失败 ({len(rows)} 条),保留 pending 重试: {e}')
 
 
