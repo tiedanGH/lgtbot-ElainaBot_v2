@@ -190,6 +190,23 @@ body {
   padding: 48px; text-align: center; color: var(--text-faint); font-size: 13px;
 }
 
+/* 移动端:窄屏下 4 列网格挤不下(76+56+200 = 332px,留给 content 的空间为负),
+   重排为两行 —— 第一行 time / dir / who 平铺,第二行 content 独占整宽。
+   分隔线沿用 .log-row 自带的 border-bottom,无需额外加。 */
+@media (max-width: 600px) {
+  .log-row {
+    grid-template-columns: auto auto 1fr;
+    grid-template-areas:
+      "time dir  who"
+      "content content content";
+    gap: 4px 10px;
+  }
+  .log-row .time    { grid-area: time; }
+  .log-row .dir     { grid-area: dir; }
+  .log-row .who     { grid-area: who; }
+  .log-row .content { grid-area: content; }
+}
+
 /* ───── 用户数据:toolbar / 分页 / 搜索 / 表格 ───── */
 .users-toolbar {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
