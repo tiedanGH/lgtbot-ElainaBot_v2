@@ -19,7 +19,7 @@ import os
 import time
 
 from core.base.logger import get_logger, PLUGIN
-from . import state, quota, helpers, boot, uploader, userdb, buttons
+from . import state, quota, helpers, boot, uploader, userdb, buttons, log_attribution
 from .webui import message_log
 
 log = get_logger(PLUGIN, 'LGTBot')
@@ -263,10 +263,11 @@ async def _send_text_quota_managed(target_id, is_uid, msg, extra_buttons):
 
     kwargs = {ref_type: ref_value}
     try:
-        if is_uid:
-            await sender.send_to_user(target_id, msg, buttons=btns_arg, **kwargs)
-        else:
-            await sender.send_to_group(target_id, msg, buttons=btns_arg, **kwargs)
+        with log_attribution.mark_outbound():
+            if is_uid:
+                await sender.send_to_user(target_id, msg, buttons=btns_arg, **kwargs)
+            else:
+                await sender.send_to_group(target_id, msg, buttons=btns_arg, **kwargs)
     except Exception as e:
         log.warning(f'发送文本失败 ({target_id}): {e}')
 
@@ -386,10 +387,11 @@ async def _send_markdown_image(sender, target_id, is_uid, ref_type, ref_value,
 
     kwargs = {ref_type: ref_value}
     try:
-        if is_uid:
-            await sender.send_to_user(target_id, md, buttons=btns_arg, **kwargs)
-        else:
-            await sender.send_to_group(target_id, md, buttons=btns_arg, **kwargs)
+        with log_attribution.mark_outbound():
+            if is_uid:
+                await sender.send_to_user(target_id, md, buttons=btns_arg, **kwargs)
+            else:
+                await sender.send_to_group(target_id, md, buttons=btns_arg, **kwargs)
         return True
     except Exception as e:
         log.warning(f'markdown 图片发送失败 ({target_id}): {e}, 回退到媒体消息')
@@ -417,9 +419,10 @@ async def _send_media_fallback(sender, target_id, is_uid, ref_type, ref_value,
     media_dict = {'file_info': file_info}
     kwargs = {ref_type: ref_value}
     try:
-        if is_uid:
-            await sender.send_to_user(target_id, rendered_content, media=media_dict, **kwargs)
-        else:
-            await sender.send_to_group(target_id, rendered_content, media=media_dict, **kwargs)
+        with log_attribution.mark_outbound():
+            if is_uid:
+                await sender.send_to_user(target_id, rendered_content, media=media_dict, **kwargs)
+            else:
+                await sender.send_to_group(target_id, rendered_content, media=media_dict, **kwargs)
     except Exception as e:
         log.warning(f'发送图片失败 ({target_id}): {e}')

@@ -117,6 +117,7 @@ plugins/LGTBot_ElainaBot/app/quota.py: ...            # 更不要带完整路径
 | `config`     | `data/config.yaml` 读写                                      |
 | `userdb`     | 用户昵称 / 头像 SQLite 持久化（pending dict + 5 min 批量 flush）        |
 | `uploader`   | 图床上传调度 + 图片尺寸解析                                            |
+| `log_attribution` | 类级 monkey-patch `MessageSender._log_push`,让本插件的 push 在主框架 Web 面板归类为「LGTBot 消息派发」 |
 | `webui/`     | Web 面板侧边栏页面                                                |
 
 新增功能时优先选最契合的现有模块，**只有职责明显独立时才新建文件**。

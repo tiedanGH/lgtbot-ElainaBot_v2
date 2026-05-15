@@ -129,6 +129,7 @@ plugins/LGTBot_ElainaBot/
 │   ├── config.py            data/config.yaml 读写
 │   ├── userdb.py            用户昵称 / 头像 SQLite 持久化（5 min 批量 flush）
 │   ├── uploader.py          图床上传调度（COS / B站）+ 图片尺寸解析
+│   ├── log_attribution.py   类级 monkey-patch ，把本插件 push 的消息在 Web 面板正确归类
 │   └── webui/               Web 面板拓展页（侧边栏「LGTBot 机器人」/ 多标签）
 │       ├── __init__.py
 │       ├── main.py          入口：页面注册 + 主页面拼装（读 templates/ 并填充占位）
