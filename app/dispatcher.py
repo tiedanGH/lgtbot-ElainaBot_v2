@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 import os
+import re
 import sys
 import time
 import asyncio
@@ -123,15 +124,27 @@ async def lgtbot_dispatch(event, match):
         log.warning(f'派发消息失败: {e}')
 
 
-# ──────── INTERACTION 收割机：刷新引用配额 ─────────────────────────────────
-# 「🔄 刷新」按钮（type=1 callback，data='__lgt_relay__'）被点击时触发：
-#   1. 立即 ack_interaction(code=0) —— 让客户端不再显示"请求超时"
-#   2. 用本次 INTERACTION 的 event_id 刷新对应 target 的引用配额
-#   3. 唤醒可能正在 _wait_and_consume 中等待的发送协程（refresh_ref 内做）
+# ──────── INTERACTION:两类 callback 按钮 ──────────────────────────────────
+# QQ INTERACTION_CREATE 事件由 type=1 callback 按钮点击触发,event.content 是
+# 按钮的 data 字段。本插件处理两类:
 #
-# 用户体验：点击按钮无明显反应（仅短暂 toast），但被动消息能力立即恢复 5 条
+#   1. 「🔄 刷新会话」按钮(data == quota.RELAY_BUTTON_DATA = '__lgt_relay__')
+#      —— 专门用于续被动引用配额,不走 LGTBot 引擎。lgtbot_interaction_relay
+#      只 ack + 刷新 event_id 配额,客户端看一个短暂 toast,5 条被动额度立即续上。
+#
+#   2. 其他所有 data(欢迎菜单的「数字蜂巢/天赋云巢/...」、规则按钮、上下文按钮
+#      等)—— 等同于用户主动发送 data 这段文字。lgtbot_interaction_dispatch
+#      ack 后把 content 走 on_public_message / on_private_message 派进 C++ 引擎,
+#      与 lgtbot_dispatch 的消息派发路径镜像,差异仅在配额用 event_id 续而非
+#      msg_id(INTERACTION 没有 msg_id,但 event_id 是独立的新 5 条额度)。
+#
+# 两个 handler 用互斥 regex 划分职责:relay 严格匹配 RELAY_BUTTON_DATA,
+# dispatch 用负向先行 (?!) 排掉这个 sentinel。
 
-@handler(r'.*', name='LGTBot 刷新按钮回调', priority=-200, event_types={INTERACTION_CREATE})
+@handler(rf'^{re.escape(quota.RELAY_BUTTON_DATA)}$',
+         name='LGTBot 刷新按钮回调',
+         priority=-200,
+         event_types={INTERACTION_CREATE})
 async def lgtbot_interaction_relay(event, match):
     try:
         await event.ack_interaction(code=0)
@@ -147,6 +160,70 @@ async def lgtbot_interaction_relay(event, match):
     if event.user_id:
         quota.refresh_ref(helpers.target_key(event.user_id, True),
                           'event_id', event.event_id, appid_str)
+
+
+@handler(rf'^(?!{re.escape(quota.RELAY_BUTTON_DATA)}$).+',
+         name='LGTBot 按钮回调派发',
+         priority=-100,
+         event_types={INTERACTION_CREATE})
+async def lgtbot_interaction_dispatch(event, match):
+    """非刷新 callback:把 button data 当用户消息派发给 LGTBot 引擎。
+
+    与 lgtbot_dispatch 的消息处理流程几乎一致(mark_dirty / 配额续 / 日志 /
+    起线程派给 C++),差异仅:
+      · 必须先 ack_interaction —— 否则客户端 3s 后弹"请求超时"
+      · 配额刷新键用 event.event_id('event_id' 类型),而不是 msg_id
+        (INTERACTION 没 msg_id,但 event_id 同样能撑起 5 条被动回复额度)
+    """
+    # ack 优先于一切,确保在 3s 时限内回执
+    try:
+        await event.ack_interaction(code=0)
+    except Exception:
+        pass
+
+    if not state.started:
+        return
+
+    content = (event.content or '').strip()
+    if not content:
+        return
+
+    uid = event.user_id or ''
+    gid = event.group_id or event.channel_id or ''
+
+    # 按钮点击本身就是一次活跃事件 —— mark_dirty 现在不要求 name/avatar 非空,
+    # 仅刷 last_seen 也会被记下(INTERACTION 事件没有 username 字段是正常的)
+    if uid:
+        appid = event.appid or ''
+        avatar = helpers.QQ_AVATAR_URL.format(appid=appid, openid=uid) if appid else ''
+        userdb.mark_dirty(uid, name=getattr(event, 'username', '') or '', avatar=avatar)
+
+    appid_str = event.appid or ''
+    if event.event_id:
+        if event.is_group and gid:
+            quota.refresh_ref(helpers.target_key(gid, False),
+                              'event_id', event.event_id, appid_str)
+        if uid:
+            quota.refresh_ref(helpers.target_key(uid, True),
+                              'event_id', event.event_id, appid_str)
+
+    message_log.log_incoming(uid, gid if event.is_group else '', content)
+
+    try:
+        if event.is_group and gid:
+            threading.Thread(
+                target=boot.LGTBot_ElainaBot.on_public_message,
+                args=(content, uid, gid),
+                daemon=True,
+            ).start()
+        elif event.is_direct and uid:
+            threading.Thread(
+                target=boot.LGTBot_ElainaBot.on_private_message,
+                args=(content, uid),
+                daemon=True,
+            ).start()
+    except Exception as e:
+        log.warning(f'派发按钮回调失败: {e}')
 
 
 # ──────── 重启逻辑(命令 / WebUI 共用) ─────────────────────────────────────

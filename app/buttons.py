@@ -38,7 +38,7 @@ def build_game_action_buttons(game_name: str | None = None,
         ])
     if include_rule and game_name:
         rows.append([
-            {'text': f'📖 《{game_name}》规则', 'data': f'/规则 {game_name}', 'type': 2, 'style': 4},
+            {'text': f'📖 《{game_name}》规则', 'data': f'/规则 {game_name}', 'type': 1, 'style': 4},
         ])
     return rows
 
@@ -72,7 +72,7 @@ def build_unknown_meta_buttons() -> list[list[dict]]:
 def build_unknown_config_buttons() -> list[list[dict]]:
     """场景 2:已在等待中的房间但用了未知的游戏配置 —— 配置帮助 + 元指令帮助。"""
     return [[
-        {'text': '⚙️ 配置帮助', 'data': '帮助',  'type': 2, 'style': 4},
+        {'text': '⚙️ 配置帮助', 'data': '帮助',  'type': 1, 'style': 4},
         {'text': '❓ 元指令帮助', 'data': '/帮助', 'type': 2, 'style': 1},
     ]]
 
@@ -80,7 +80,7 @@ def build_unknown_config_buttons() -> list[list[dict]]:
 def build_unknown_game_buttons() -> list[list[dict]]:
     """场景 3:游戏进行中,但用了未知的游戏指令 —— 游戏帮助 + 元指令帮助。"""
     return [[
-        {'text': '🎮 游戏帮助', 'data': '帮助',  'type': 2, 'style': 4},
+        {'text': '🎮 游戏帮助', 'data': '帮助',  'type': 1, 'style': 4},
         {'text': '❓ 元指令帮助', 'data': '/帮助', 'type': 2, 'style': 1},
     ]]
 
@@ -106,13 +106,14 @@ def build_about_buttons() -> list[list[dict]]:
 # 单独 @ 机器人时回复的欢迎菜单按钮
 MENU_BUTTONS = [
     [
-        {'text': '📖 查看帮助', 'data': '/帮助',    'type': 2, 'style': 4},
-        {'text': '🎲 游戏列表', 'data': '/游戏列表', 'type': 2, 'style': 4},
+        {'text': '📖 查看帮助', 'data': '/帮助',    'type': 1, 'style': 4},
+        {'text': '🎲 游戏列表', 'data': '/游戏列表', 'type': 1, 'style': 4},
     ],
     [
         {'text': '🎮 创建房间', 'data': '/新游戏',  'type': 2, 'style': 1},
         {'text': '📊 我的战绩', 'data': '/战绩',    'type': 2, 'style': 1},
     ],
+    # 游戏快捷开局按钮
     [
         {'text': '数字蜂巢', 'data': '/新游戏 数字蜂巢', 'type': 2, 'style': 0},
         {'text': '天赋云巢', 'data': '/新游戏 天赋云巢', 'type': 2, 'style': 0},
