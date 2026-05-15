@@ -251,12 +251,12 @@ def check_and_prepare_restart() -> tuple[bool, str]:
                      「Python 还在 / C++ 引擎已无」的半残状态。
     """
     if not boot.LGTBOT_AVAILABLE:
-        return (False, 'ℹ️ LGTBot 引擎未加载，无需重启。')
+        return False, 'ℹ️ LGTBot 引擎未加载，无需重启。'
     if not boot.LGTBot_ElainaBot.release_bot_if_not_processing_games():
-        return (False, '⚠️ 当前存在进行中的游戏，请等待对局结束。')
+        return False, '⚠️ 当前存在进行中的游戏，请等待对局结束后再重启！'
     state.started = False
     boot.mark_engine_running(False)
-    return (True, '🔁 LGTBot 正在重启（重新加载全部 C++ 引擎与游戏插件）…')
+    return True, '🔁 LGTBot 正在重启（重新加载全部 C++ 引擎与游戏插件）...'
 
 
 def schedule_exec_after(delay: float = 0.5, on_failure=None) -> None:
@@ -292,7 +292,7 @@ def schedule_exec_after(delay: float = 0.5, on_failure=None) -> None:
 # WebUI 重启按钮也走同一对 helper —— 见 webui/main.py::_render_restart。
 
 @handler(r'^重启$',
-         name='LGTBot 插件重启',
+         name='LGTBot 重启',
          owner_only=True,
          event_types=_LGT_MSG_EVENTS,
          priority=100)

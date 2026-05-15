@@ -63,7 +63,7 @@ function showBanner(msg, isWarning) {
 
 /* ──── 重启按钮(整页通用,标题栏右侧)──── */
 document.getElementById('restart-btn').addEventListener('click', async () => {
-  if (!confirm('确认重启 LGTBot？\n会以全新进程重新加载 C++ 引擎、bridge 与全部游戏插件,\n等同于命令 /重启。若存在进行中的对局会被拒绝。')) {
+  if (!confirm('确认重启 LGTBot？\n将以新进程重新加载 C++ 引擎、bridge 与全部游戏插件\n若存在进行中的对局会自动拒绝重启')) {
     return;
   }
   try {
