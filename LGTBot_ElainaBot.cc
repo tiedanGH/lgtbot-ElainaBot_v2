@@ -65,6 +65,7 @@ private:
  *   "所有玩家都退出了游戏"   全员退出,房间解散       -> "all_left"
  *   "所有玩家都强制退出..."  全员强制退出,房间解散   -> "all_left"
  *   "游戏已解散"             Terminate(主动/新建前置) -> "terminate" (清状态,不挂按钮)
+ *   "游戏开始，您可以使用"  Match::GameStart 成功后  -> "game_started" (触发「刷新按钮使用说明」教学)
  *   "未预料的游戏设置"        房主输错游戏配置        -> "unknown_config" (配置帮助 + 元指令帮助)
  *   "未预料的游戏指令"        游戏中玩家输错游戏指令  -> "unknown_game"   (游戏帮助 + 元指令帮助)
  *   "未预料的元指令"          / 开头的未知元指令       -> "unknown_meta"   (仅元指令帮助)
@@ -105,6 +106,10 @@ static const char* ClassifyMatchEvent(const std::string& content, std::string& o
     // tagged 构建形如 v1.0.0-N-gXXXX,合并后含 "LGTBot v" 子串。lgtbot 整个代码库其他用户输出路径都不会出现此前缀,做识别串足够稳定。
     // (注:CMake 找不到 git tag 时会回退 <unpublished version>,无 v 前缀; 这是开发未提交场景,生产部署不会遇到。)
     static const std::string kAbout = "LGTBot v";
+    // Match::GameStart 成功后引擎 BoardcastAtAll 这条欢迎语(match.cc 唯一出处)。
+    // 用「游戏开始，您可以使用」这段较长的前缀做识别,既避开游戏内文本里偶然
+    // 出现「游戏开始」二字的可能,也避开 announce / new_game 类 brief 被误判。
+    static const std::string kGameStarted = "游戏开始，您可以使用";
 
     out_game_name.clear();
 
@@ -140,7 +145,12 @@ static const char* ClassifyMatchEvent(const std::string& content, std::string& o
         return "about";
     }
 
-    // 5. 以下事件都需要 brief 存在,顺带把游戏名拿出来
+    // 5. 游戏真的开始 —— 早于 brief 检查,因为 GameStart 这条广播没有 brief
+    if (content.find(kGameStarted) != std::string::npos) {
+        return "game_started";
+    }
+
+    // 6. 以下事件都需要 brief 存在,顺带把游戏名拿出来
     const size_t name_pos = content.find(kGameNameMarker);
     if (name_pos == std::string::npos) {
         return nullptr;

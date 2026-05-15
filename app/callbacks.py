@@ -14,6 +14,7 @@
 """
 
 from __future__ import annotations
+import asyncio
 import os
 import time
 
@@ -22,6 +23,75 @@ from . import state, quota, helpers, boot, uploader, userdb, buttons
 from .webui import message_log
 
 log = get_logger(PLUGIN, 'LGTBot')
+
+
+# ──────── 「刷新按钮使用说明」教学提示(game_started 触发,紧跟开局公告发出) ────
+# 触发流:LGTBot_ElainaBot.cc::ClassifyMatchEvent 识别引擎「游戏开始,您可以使用」
+# 广播 → 调 cb_match_event(kind='game_started') → 此处把 key 记入
+# _pending_tip_keys。**真正的发送时机被推迟到本帧的 cb_send_text_message /
+# cb_send_image_message 把引擎那条开局公告同步落地之后**:
+#   1. C++ 调 cb_match_event(只标记,不立刻发) → 立即返回
+#   2. C++ 调 cb_send_text_message → 内部 run_coro_blocking 同步等开局公告送达
+#   3. 等待返回后我们才 `_schedule_refresh_tip` —— 这就保证 QQ 端先看到「游戏
+#      开始」,再看到「刷新按钮使用说明」,不会因为 asyncio FIFO 调度导致教学
+#      提示抢在开局公告前面送达。
+_pending_tip_keys: set[str] = set()
+
+_REFRESH_TIP_MD = (
+    '## 【重要】关于刷新按钮\n'
+    '\n'
+    '机器人每条消息**最多回复5条**，且**5分钟**后失效。\n'
+    '\n'
+    '✅ **点了** → 立即续 **5条** 新回复额度，游戏不间断\n'
+    '❌ **没点** → 配额耗尽后机器人将**无法继续回复**，将影响游戏体验\n'
+    '\n'
+    '---'
+)
+
+
+async def _send_refresh_tip(target_id: str, is_uid: bool) -> None:
+    """走标准 `_send_text_quota_managed` 通道发出教学提示。
+
+    用引擎的发送通道而非 `event.reply`:
+      · 自动复用当前 target 的引用配额(msg_id / event_id 都行)
+      · 配额耗尽时按引擎规则等待 ≤15s,与正常游戏消息一致
+      · 教学按钮带的是真 RELAY_BUTTON_DATA,被点击就续配额,无副作用
+    """
+    try:
+        message_log.log_outgoing(target_id, is_uid, _REFRESH_TIP_MD)
+        await _send_text_quota_managed(
+            target_id, is_uid, _REFRESH_TIP_MD,
+            quota.build_refresh_demo_buttons())
+    except Exception as e:
+        log.debug(f'刷新按钮使用说明发送失败 ({target_id}): {e}')
+
+
+def _schedule_refresh_tip(target_id: str, is_uid: bool) -> None:
+    """C++ 工作线程安全地把 `_send_refresh_tip` 投到 asyncio loop,fire-and-forget。
+
+    `asyncio.run_coroutine_threadsafe` 返回的 Future 故意不 await —— C++ 线程
+    立即返回继续处理引擎下一帧。
+    """
+    loop = state.event_loop
+    if loop is None or loop.is_closed():
+        log.debug('事件循环不可用,跳过刷新按钮使用说明')
+        return
+    try:
+        asyncio.run_coroutine_threadsafe(
+            _send_refresh_tip(target_id, is_uid), loop)
+    except Exception as e:
+        log.debug(f'调度刷新按钮使用说明失败: {e}')
+
+
+def _consume_pending_tip(key: str, target_id: str, is_uid: bool) -> None:
+    """若本 key 之前在 cb_match_event 里被打了 game_started 标记,这里弹掉并发出。
+
+    由两个发送回调(text / image)在 `run_coro_blocking` 同步返回后调用 ——
+    那一刻引擎的开局公告已经送达 QQ,我们才能把教学提示安全地排在它后面。
+    """
+    if key in _pending_tip_keys:
+        _pending_tip_keys.discard(key)
+        _schedule_refresh_tip(target_id, is_uid)
 
 
 # ──────── 用户信息回调（被 LGTBot 引擎调用，需返回字符串） ─────────────────
@@ -41,6 +111,12 @@ def cb_match_event(target_id: str, is_uid: bool, kind: str, game_name: str):
       ``terminate``      清空当前游戏名,不挂按钮(/新游戏 前置解散 / 管理员
                          主动结束等场景,紧接着会有真正的新建消息覆盖,或就该
                          安静收尾)。
+      ``game_started``   引擎 Match::GameStart 成功后的 BoardcastAtAll —— 不动
+                         按钮,只把 key 记入 ``_pending_tip_keys``;真正发出
+                         「刷新按钮使用说明」由本帧 cb_send_text/image 同步
+                         送完开局公告后立刻触发(_consume_pending_tip)。比
+                         Python 侧匹配 /开始 用户输入更可靠:用户瞎敲 /开始
+                         不在房间里时引擎不会广播这条,自然不会误教学。
       ``unknown_meta``       未参与游戏 / 不在本群的游戏 —— 挂「元指令帮助」。
       ``unknown_config``     等待房间里输错配置 —— 挂「配置帮助 + 元指令帮助」。
       ``unknown_game``       游戏进行中输错游戏指令 —— 挂「游戏帮助 + 元指令帮助」。
@@ -86,6 +162,11 @@ def cb_match_event(target_id: str, is_uid: bool, kind: str, game_name: str):
         state.pending_buttons[key] = buttons.build_game_list_buttons()
     elif kind == 'about':
         state.pending_buttons[key] = buttons.build_about_buttons()
+    elif kind == 'game_started':
+        # 仅标记 —— 本帧 cb_send_text_message / cb_send_image_message 在引擎
+        # 开局公告同步落地后调 _consume_pending_tip 真正发出教学提示,保证 QQ
+        # 端的顺序是「游戏开始」→「刷新按钮使用说明」,而不是反过来。
+        _pending_tip_keys.add(key)
     # 'announce' / 'terminate' 不挂按钮
 
 
@@ -125,13 +206,18 @@ def cb_send_text_message(target_id: str, is_uid: bool, msg: str):
     state.pending_buttons[key]——同一次 HandleMessages 内顺序调用,
     GIL 保护下读写安全。
     """
-    extra_buttons = state.pending_buttons.pop(helpers.target_key(target_id, is_uid), None)
+    key = helpers.target_key(target_id, is_uid)
+    extra_buttons = state.pending_buttons.pop(key, None)
     message_log.log_outgoing(target_id, is_uid, msg)
 
     async def _do():
         await _send_text_quota_managed(target_id, is_uid, msg, extra_buttons)
 
     helpers.run_coro_blocking(_do())
+
+    # 引擎这条已落地(run_coro_blocking 同步等了它),如果本帧 cb_match_event
+    # 之前标了 game_started,这里把「刷新按钮使用说明」紧跟着排出去。
+    _consume_pending_tip(key, target_id, is_uid)
 
 
 async def _send_text_quota_managed(target_id, is_uid, msg, extra_buttons):
@@ -225,6 +311,13 @@ def cb_send_image_message(target_id: str, is_uid: bool, image_path: str, content
         await _send_image_quota_managed(target_id, is_uid, data, raw_content, filename)
 
     helpers.run_coro_blocking(_do())
+
+    # 多图情况下,game_started 的「游戏开始」字符串只会出现在合并后的 caption
+    # (第 1 张图带 content),所以只有 raw_content 非空时才有可能命中标记;
+    # 第 2 张以后 raw_content 为空,_consume_pending_tip 看不到 key 也是 no-op。
+    if raw_content:
+        _consume_pending_tip(
+            helpers.target_key(target_id, is_uid), target_id, is_uid)
 
 
 async def _send_image_quota_managed(target_id, is_uid, data, raw_content, filename):
