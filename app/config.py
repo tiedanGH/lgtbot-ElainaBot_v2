@@ -6,6 +6,7 @@
   · admin_uids: list[str]            LGTBot 内部管理员 openid 列表
   · refresh_wait_timeout: float      被动消息配额耗尽后等待刷新按钮的秒数
   · image_hosting: str               markdown 图片内嵌使用的单个图床名（留空 = 禁用）
+  · menu_game_buttons: list[str]     欢迎菜单的游戏快捷按钮列表（自动按每行 3 个排版）
 """
 
 from __future__ import annotations
@@ -15,10 +16,18 @@ from . import state, boot
 
 log = get_logger(PLUGIN, 'LGTBot')
 
+# 默认游戏快捷按钮列表 —— 与 buttons.DEFAULT_MENU_GAMES 同源,这里复制一份是
+# 为了让 ensure_config 写出 config.yaml 模板时直接呈现给用户。
+_DEFAULT_MENU_GAMES = [
+    '数字蜂巢', '天赋云巢', '炼金术士',
+    '差值投标', '决胜五子', '彩虹奇兵',
+]
+
 DEFAULT_CONFIG = {
     'admin_uids': [],
     'refresh_wait_timeout': 15.0,
     'image_hosting': '',
+    'menu_game_buttons': list(_DEFAULT_MENU_GAMES),
 }
 CONFIG_COMMENTS = {
     'admin_uids': (
@@ -38,6 +47,13 @@ CONFIG_COMMENTS = {
         '#   只尝试指定的这一个图床，上传失败立即回退 msg_type=7\n'
         '#   （遍历所有启用图床耗时过长，故仅支持单选）\n'
         '#   注意：图床域名需先在 QQ 开放平台「消息 URL 配置」报备'
+    ),
+    'menu_game_buttons': (
+        '欢迎菜单（单独 @机器人时回复）里「游戏快捷开局」按钮列表\n'
+        '#   每个游戏名会被拼成 `/新游戏 <游戏名>` 作为按钮点击后的命令\n'
+        '#   默认每行 3 个按钮自动排版（默认 6 个游戏 = 2 行）\n'
+        '#   留空列表 = 不显示游戏快捷按钮（菜单里仍有帮助/创建房间等其他按钮）\n'
+        '#   游戏名需与 /游戏列表 输出一致，否则点击后引擎会回「未知的游戏名」'
     ),
 }
 
@@ -107,7 +123,7 @@ def load_plugin_config() -> str:
 
 def _apply_runtime_tunables(cfg: dict):
     """把 config.yaml 中的可调字段下发到对应运行时模块"""
-    from . import quota, uploader
+    from . import quota, uploader, buttons as _buttons
 
     timeout = cfg.get('refresh_wait_timeout', 15.0)
     try:
@@ -135,3 +151,18 @@ def _apply_runtime_tunables(cfg: dict):
         new = backend or '(未启用)'
         log.info(f'image_hosting: {old} → {new}')
         uploader.SELECTED_BACKEND = backend
+
+    # 欢迎菜单的游戏快捷按钮列表 —— 非法 / 缺失时回退到默认 6 个,buttons.py
+    # 的 build_menu_buttons() 每次调用都读这个列表,所以下发后下一次回欢迎菜单
+    # 即生效。
+    raw_games = cfg.get('menu_game_buttons', None)
+    if raw_games is None:
+        games = list(_buttons.DEFAULT_MENU_GAMES)
+    elif isinstance(raw_games, list):
+        games = [str(g).strip() for g in raw_games if str(g).strip()]
+    else:
+        log.warning(f'menu_game_buttons 应为字符串列表，已忽略 (got {type(raw_games).__name__})')
+        games = list(_buttons.DEFAULT_MENU_GAMES)
+    if _buttons.MENU_GAMES != games:
+        log.info(f'menu_game_buttons: {len(_buttons.MENU_GAMES)} → {len(games)} 个游戏')
+        _buttons.MENU_GAMES = games

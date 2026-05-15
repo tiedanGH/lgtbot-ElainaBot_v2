@@ -93,7 +93,7 @@ async def lgtbot_dispatch(event, match):
                       + buttons.MENU_TEXT_BODY)
             else:
                 md = buttons.MENU_TEXT_HEADER + buttons.MENU_TEXT_BODY
-            await event.reply(md, buttons=buttons.MENU_BUTTONS)
+            await event.reply(md, buttons=buttons.build_menu_buttons())
             message_log.log_outgoing(gid or uid, not (event.is_group and gid),
                                      '[欢迎菜单]')
         except Exception as e:

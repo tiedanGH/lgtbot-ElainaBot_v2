@@ -103,39 +103,64 @@ def build_about_buttons() -> list[list[dict]]:
         {'text': 'LGT-Bot 仓库', 'link': 'https://github.com/Slontia/lgtbot'},
     ]]
 
-# 单独 @ 机器人时回复的欢迎菜单按钮
-MENU_BUTTONS = [
-    [
-        {'text': '📖 查看帮助', 'data': '/帮助',    'type': 1, 'style': 4},
-        {'text': '🎲 游戏列表', 'data': '/游戏列表', 'type': 1, 'style': 4},
-    ],
-    [
-        {'text': '🎮 创建房间', 'data': '/新游戏',  'type': 2, 'style': 1},
-        {'text': '📊 我的战绩', 'data': '/战绩',    'type': 2, 'style': 1},
-    ],
-    # 游戏快捷开局按钮
-    [
-        {'text': '数字蜂巢', 'data': '/新游戏 数字蜂巢', 'type': 2, 'style': 0},
-        {'text': '天赋云巢', 'data': '/新游戏 天赋云巢', 'type': 2, 'style': 0},
-    ],
-    [
-        {'text': '五子棋', 'data': '/新游戏 五子棋',  'type': 2, 'style': 0},
-        {'text': '困兽棋', 'data': '/新游戏 困兽棋',  'type': 2, 'style': 0},
-    ],
-    # 链接按钮（type=0）
-    [
-        {'text': '仓库',
-         'link': 'https://github.com/tiedanGH/LGTBot_ElainaBot'},
-        {'text': '网站',
-         'link': 'https://tiedan.site'},
-        {'text': '官群',
-         'link': ('https://qun.qq.com/universal-share/share?ac=1'
-                  '&authKey=GLoA6W7KujPW%2B%2B%2FeirVZVVEn61q%2FAmLFyd9mkJ8u%2Bv0E%2B2IooquHavHi9iaJSxKK'
-                  '&busi_data=eyJncm91cENvZGUiOiIxMDU5ODM0MDI0IiwidG9rZW4iOiJsTUFlUHZsdVJpSUhTc2dLSTBoeDI2M0IxS09kTGg3NzFsd1dvaVVLajVqTTIvRm9zaGlMTHBrekRIOGdVZHlaIiwidWluIjoiMjI5NTgyNDkyNyJ9'
-                  '&data=IMqVKIvDehyMv2ooaqlgzql0-Q9XENN4pK6qGR1mqYoZH5AFDBMmrflWNEFN-EOLeKuJTxLABAwgaaUnUp-iyw'
-                  '&svctype=4&tempid=h5_group_info')},
-    ],
+# ──────── 欢迎菜单按钮组 ────────────────────────────────────────────────────
+# 「游戏快捷开局」部分按 ``MENU_GAMES`` 渲染,这个列表由 ``data/config.yaml``
+# 的 ``menu_game_buttons`` 字段在 @on_load 时下发 (见 config.py)。其他部分
+# (帮助 / 游戏列表 / 创建房间 / 战绩 / 仓库链接) 是固定的。
+#
+# 之所以拆成函数而非常量,是为了让 config 改后 dispatcher 下次 reply 立刻拿到
+# 新布局,不用重启进程;调用方一律走 ``build_menu_buttons()``。
+
+DEFAULT_MENU_GAMES: list[str] = [
+    '数字蜂巢', '天赋云巢', '炼金术士',
+    '差值投标', '决胜五子', '彩虹奇兵',
 ]
+# 由 config.py::_apply_runtime_tunables 覆盖;默认 6 个游戏 → 2 行 × 3 列。
+MENU_GAMES: list[str] = list(DEFAULT_MENU_GAMES)
+# 每行最多几个游戏按钮;QQ 客户端单行最多 5 个,3 排版上最舒服。
+MENU_GAMES_PER_ROW: int = 3
+
+_OFFICIAL_GROUP_LINK = (
+    'https://qun.qq.com/universal-share/share?ac=1'
+    '&authKey=GLoA6W7KujPW%2B%2B%2FeirVZVVEn61q%2FAmLFyd9mkJ8u%2Bv0E%2B2IooquHavHi9iaJSxKK'
+    '&busi_data=eyJncm91cENvZGUiOiIxMDU5ODM0MDI0IiwidG9rZW4iOiJsTUFlUHZsdVJpSUhTc2dLSTBoeDI2M0IxS09kTGg3NzFsd1dvaVVLajVqTTIvRm9zaGlMTHBrekRIOGdVZHlaIiwidWluIjoiMjI5NTgyNDkyNyJ9'
+    '&data=IMqVKIvDehyMv2ooaqlgzql0-Q9XENN4pK6qGR1mqYoZH5AFDBMmrflWNEFN-EOLeKuJTxLABAwgaaUnUp-iyw'
+    '&svctype=4&tempid=h5_group_info'
+)
+
+
+def build_menu_buttons() -> list[list[dict]]:
+    """组装欢迎菜单完整按钮组(每次调用都按当前 ``MENU_GAMES`` 重新渲染)。
+
+    游戏快捷部分被切分为每行 ``MENU_GAMES_PER_ROW`` 个;``MENU_GAMES`` 为空
+    列表时跳过整个游戏分区,菜单仍包含帮助/创建房间等固定按钮和仓库链接。
+    """
+    game_rows: list[list[dict]] = []
+    for i in range(0, len(MENU_GAMES), MENU_GAMES_PER_ROW):
+        chunk = MENU_GAMES[i:i + MENU_GAMES_PER_ROW]
+        game_rows.append([
+            {'text': name, 'data': f'/新游戏 {name}',
+             'type': 2, 'style': 0}
+            for name in chunk
+        ])
+    return [
+        [
+            {'text': '📖 查看帮助', 'data': '/帮助',    'type': 1, 'style': 4},
+            {'text': '🎲 游戏列表', 'data': '/游戏列表', 'type': 1, 'style': 4},
+        ],
+        [
+            {'text': '🎮 创建房间', 'data': '/新游戏',  'type': 2, 'style': 1},
+            {'text': '📊 我的战绩', 'data': '/战绩',    'type': 2, 'style': 1},
+        ],
+        # 游戏快捷开局按钮(可配置 —— data/config.yaml 的 menu_game_buttons)
+        *game_rows,
+        # 链接按钮(type=0)
+        [
+            {'text': '仓库', 'link': 'https://github.com/tiedanGH/LGTBot_ElainaBot'},
+            {'text': '网站', 'link': 'https://tiedan.site'},
+            {'text': '官群', 'link': _OFFICIAL_GROUP_LINK},
+        ],
+    ]
 
 # 单独 @ bot（content 为空）时回复的欢迎语
 MENU_TEXT_HEADER = (
