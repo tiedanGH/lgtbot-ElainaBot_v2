@@ -53,27 +53,35 @@ git submodule update --init --recursive plugins/LGTBot_ElainaBot/lgtbot
 
 ```bash
 cd plugins/LGTBot_ElainaBot
-bash build.sh                 # 标准编译（Release，无测试）
-bash build.sh --test          # 带 LGTBot 单元测试 (-DWITH_TEST=ON)
-bash build.sh --clean         # 清理后重编译
-bash build.sh --clean --test  # 清理 + 测试模式
-bash build.sh -j 8            # 8 进程并行
-bash build.sh --debug         # Debug 构建（含调试符号）
-bash build.sh --asan          # 启用 AddressSanitizer 排查内存问题
-bash build.sh --no-glog       # 关闭 glog 日志
-bash build.sh --no-games      # 不编译内置游戏（仅引擎）
-bash build.sh --help          # 查看所有参数
+bash build.sh                          # 标准编译（Release，无测试）
+bash build.sh --test                   # 带 LGTBot 单元测试 (-DWITH_TEST=ON)
+bash build.sh --clean                  # 清理后重编译
+bash build.sh --clean --test           # 清理 + 测试模式
+bash build.sh -j 8                     # 8 进程并行
+bash build.sh --debug                  # Debug 构建（含调试符号）
+bash build.sh --asan                   # 启用 AddressSanitizer 排查内存问题
+bash build.sh --no-glog                # 关闭 glog 日志
+bash build.sh --no-games               # 不编译内置游戏（仅引擎）
+bash build.sh -t LGTBot_ElainaBot      # 仅编桥接层 .so（改了 LGTBot_ElainaBot.cc 后最常用）
+bash build.sh -t numcomb -t alchemist  # 仅编两个游戏（增量调试某游戏）
+bash build.sh --list-targets           # 列出所有可选目标
+bash build.sh -i                       # 增量编译：跳过依赖检查 + CMake 配置（秒级）
+bash build.sh -i -t LGTBot_ElainaBot   # 增量 + 仅编桥接层（迭代 .cc 时最快路径）
+bash build.sh --help                   # 查看所有参数
 ```
 
-| 参数                      | CMake 选项             | 默认        | 说明                     |
-|-------------------------|----------------------|-----------|------------------------|
-| `--test` / `--no-test`  | `-DWITH_TEST`        | `OFF`     | LGTBot 内部单元测试（开发调试用）   |
-| `--debug` / `--release` | `-DCMAKE_BUILD_TYPE` | `Release` | 构建类型                   |
-| `--asan`                | `-DWITH_ASAN`        | `OFF`     | AddressSanitizer       |
-| `--gcov`                | `-DWITH_GCOV`        | `OFF`     | 覆盖率统计                  |
-| `--no-glog`             | `-DWITH_GLOG`        | `ON`      | glog 日志                |
-| `--no-sqlite`           | `-DWITH_SQLITE`      | `ON`      | SQLite 持久化（关闭后无排行榜/历史） |
-| `--no-games`            | `-DWITH_GAMES`       | `ON`      | 50+ 内置游戏插件             |
+| 参数                      | CMake 选项             | 默认        | 说明                                                  |
+|-------------------------|----------------------|-----------|-----------------------------------------------------|
+| `--test` / `--no-test`  | `-DWITH_TEST`        | `OFF`     | LGTBot 内部单元测试（开发调试用）                                |
+| `--debug` / `--release` | `-DCMAKE_BUILD_TYPE` | `Release` | 构建类型                                                |
+| `--asan`                | `-DWITH_ASAN`        | `OFF`     | AddressSanitizer                                    |
+| `--gcov`                | `-DWITH_GCOV`        | `OFF`     | 覆盖率统计                                               |
+| `--no-glog`             | `-DWITH_GLOG`        | `ON`      | glog 日志                                             |
+| `--no-sqlite`           | `-DWITH_SQLITE`      | `ON`      | SQLite 持久化（关闭后无排行榜/历史）                              |
+| `--no-games`            | `-DWITH_GAMES`       | `ON`      | 50+ 内置游戏插件                                          |
+| `-t` / `--target NAME`  | `cmake --target`     | `(全部)`    | 仅构建指定目标，可重复多次（如 `-t numcomb`）                       |
+| `--list-targets`        | —                    | —         | 列出 CMake 已知目标，方便挑 `-t` 参数                           |
+| `-i` / `--incremental`  | —                    | —         | 跳过 依赖检查 + CMake 直接构建；要求 `build/` 已存在，与 `--clean` 互斥 |
 
 > 生产部署使用 `bash build.sh` 即可；只有需要跑 LGTBot 自带测试用例时才加 `--test`。
 >

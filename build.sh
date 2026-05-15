@@ -4,17 +4,30 @@
 #
 # 用法：
 #   cd plugins/LGTBot_ElainaBot
-#   bash build.sh                 # 标准编译（无测试）
-#   bash build.sh --test          # 带 LGTBot 测试模式编译 (-DWITH_TEST=ON)
-#   bash build.sh --clean         # 清理后重编译
-#   bash build.sh --clean --test  # 清理 + 测试模式
-#   bash build.sh -j 8            # 指定并行 jobs
-#   bash build.sh --debug         # Debug 构建 (默认 Release)
-#   bash build.sh --asan          # 启用 AddressSanitizer (-DWITH_ASAN=ON)
-#   bash build.sh --no-glog       # 关闭 glog 日志 (默认 ON)
-#   bash build.sh --no-games      # 不编译内置游戏插件 (默认 ON)
+#   bash build.sh                          # 标准编译（无测试），构建全部
+#   bash build.sh --test                   # 带 LGTBot 测试模式编译 (-DWITH_TEST=ON)
+#   bash build.sh --clean                  # 清理后重编译
+#   bash build.sh --clean --test           # 清理 + 测试模式
+#   bash build.sh -j 8                     # 指定并行 jobs
+#   bash build.sh --debug                  # Debug 构建 (默认 Release)
+#   bash build.sh --asan                   # 启用 AddressSanitizer (-DWITH_ASAN=ON)
+#   bash build.sh --no-glog                # 关闭 glog 日志 (默认 ON)
+#   bash build.sh --no-games               # 不编译内置游戏插件 (默认 ON)
+#
+# 仅构建指定目标 (重复 --target / -t 可指定多个):
+#   bash build.sh -t LGTBot_ElainaBot      # 只编桥接层 .so (改 LGTBot_ElainaBot.cc 后常用)
+#   bash build.sh -t numcomb -t alchemist  # 只编两个游戏
+#   bash build.sh -t bot_core              # 只编 LGTBot 核心库
+#   bash build.sh -t markdown2image        # 只编 markdown 转图二进制
+#   bash build.sh --list-targets           # 列出所有可选目标 (CMake 已知 target)
+#
+# 增量编译 (跳过依赖检查 + CMake 重新配置,直接进 cmake --build):
+#   bash build.sh -i                       # 增量构建全部
+#   bash build.sh -i -t LGTBot_ElainaBot   # 增量只编桥接层 .so (最常用,秒级)
+#   要求 build/ 已存在,与 --clean 互斥;首次构建仍须不带 -i 跑一遍完整流程
 #
 # 产物：plugins/LGTBot_ElainaBot/LGTBot_ElainaBot.so （ElainaBot 主框架启动时自动加载）
+#       游戏 .so 在 build/plugins/<game>/libgame.so;markdown2image 在 build/markdown2image
 # -----------------------------------------------------------------------------
 set -euo pipefail
 
@@ -31,6 +44,9 @@ WITH_GLOG="ON"
 WITH_SQLITE="ON"
 WITH_TEST="OFF"      # ← 默认关闭，用 --test 开启
 WITH_GAMES="ON"
+TARGETS=()           # 仅构建指定目标;为空则构建全部
+LIST_TARGETS=0
+INCREMENTAL=0        # 跳过依赖检查 + CMake 重新配置(要求 build/ 已存在)
 
 # ── 参数解析 ─────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
@@ -47,11 +63,35 @@ while [[ $# -gt 0 ]]; do
         --no-games)   WITH_GAMES="OFF"; shift ;;
         -j)           JOBS="$2"; shift 2 ;;
         -j*)          JOBS="${1#-j}"; shift ;;
+        --target)     TARGETS+=("$2"); shift 2 ;;
+        --target=*)   TARGETS+=("${1#--target=}"); shift ;;
+        -t)           TARGETS+=("$2"); shift 2 ;;
+        -t*)          TARGETS+=("${1#-t}"); shift ;;
+        --list-targets) LIST_TARGETS=1; shift ;;
+        --incremental|-i) INCREMENTAL=1; shift ;;
         -h|--help)
-            sed -n '2,20p' "$0"; exit 0 ;;
+            sed -n '2,33p' "$0"; exit 0 ;;
         *)            echo "未知参数: $1 (使用 --help 查看)"; exit 1 ;;
     esac
 done
+
+# --incremental 与 --clean 互斥:clean 会把 build/ 删了,incremental 又要求它存在
+if [[ $INCREMENTAL -eq 1 && $CLEAN -eq 1 ]]; then
+    echo "[!] --incremental 与 --clean 互斥(clean 会删 build/, incremental 要求它存在)"
+    exit 1
+fi
+if [[ $INCREMENTAL -eq 1 && ! -d build ]]; then
+    echo "[!] --incremental 要求 build/ 已存在 —— 请先不带 -i 跑一次完整构建"
+    exit 1
+fi
+
+# ── 增量模式:跳过子模块/依赖/配置,直接进 cmake --build ───────────────────
+# 注:list-targets 也走全流程的尾巴(读 build/Makefile),所以不在这里 early-return
+if [[ $INCREMENTAL -eq 1 ]]; then
+    echo "── 增量模式:跳过依赖检查 + CMake 配置 ──"
+    echo "  Parallel : $JOBS"
+    echo "  Targets  : $([ ${#TARGETS[@]} -eq 0 ] && echo '(全部)' || echo "${TARGETS[*]}")"
+else
 
 # ── 子模块检查 ───────────────────────────────────────────────────────────
 if [[ ! -f "lgtbot/CMakeLists.txt" ]]; then
@@ -140,6 +180,7 @@ cat <<EOF
   WITH_ASAN    : $WITH_ASAN
   WITH_GCOV    : $WITH_GCOV
   Parallel     : $JOBS
+  Targets      : $([ ${#TARGETS[@]} -eq 0 ] && echo '(全部)' || echo "${TARGETS[*]}")
 EOF
 
 echo "── CMake 配置 ─────────"
@@ -152,26 +193,69 @@ cmake -S . -B build \
     -DWITH_TEST="$WITH_TEST" \
     -DWITH_GAMES="$WITH_GAMES"
 
-echo "── 编译 (-j $JOBS) ────"
-cmake --build build -j "$JOBS"
+fi  # end of: if INCREMENTAL == 0
 
-# ── 验证产物 ─────────────────────────────────────────────────────────────
-SO_PATH="$SCRIPT_DIR/LGTBot_ElainaBot.so"
-if [[ ! -f "$SO_PATH" ]]; then
-    # 部分 CMake 版本不遵守 LIBRARY_OUTPUT_DIRECTORY，到 build/ 找
-    FOUND=$(find build -name 'LGTBot_ElainaBot.so' -print -quit || true)
-    if [[ -n "$FOUND" ]]; then
-        cp "$FOUND" "$SO_PATH"
+# ── --list-targets:列出 CMake 已知 target,方便用户挑 -t 参数 ───────────
+if [[ $LIST_TARGETS -eq 1 ]]; then
+    echo "── 可用编译目标 ───────"
+    # `make help` 是 CMake 生成 Makefile 时自带的目标列表;比 cmake --target help
+    # 输出更整洁(后者可能在新版 CMake 上 require generator-specific 支持)。
+    if [[ -f build/Makefile ]]; then
+        make -C build help 2>/dev/null | sed -n '/^\.\.\./p' | head -200
+    else
+        cmake --build build --target help 2>/dev/null | head -200
     fi
+    echo
+    echo "提示:bash build.sh -t <target> [-t <target> ...] 仅构建指定目标"
+    exit 0
 fi
 
-if [[ ! -f "$SO_PATH" ]]; then
-    echo "[!] 编译完成但未找到 LGTBot_ElainaBot.so"
-    exit 1
+# ── 实际编译 ─────────────────────────────────────────────────────────────
+# 多 target 时一次 cmake --build 调用里挂多个 --target,CMake ≥3.15 支持;
+# 留空 TARGETS 时不传 --target,走默认 all。
+target_args=()
+for t in "${TARGETS[@]}"; do
+    target_args+=(--target "$t")
+done
+
+echo "── 编译 (-j $JOBS) ────"
+cmake --build build -j "$JOBS" "${target_args[@]}"
+
+# ── 验证产物 ─────────────────────────────────────────────────────────────
+# 只在「肯定构建过 LGTBot_ElainaBot.so」的两种情形下校验:
+#   · 未指定 -t  (走默认 all,.so 必然在 all 里)
+#   · -t LGTBot_ElainaBot 显式指定
+# 否则 (比如 `-t numcomb`) 不要因 .so 不存在而报错 —— 用户根本没让构建它。
+WANT_SO=0
+if [[ ${#TARGETS[@]} -eq 0 ]]; then
+    WANT_SO=1
+else
+    for t in "${TARGETS[@]}"; do
+        [[ "$t" == "LGTBot_ElainaBot" ]] && WANT_SO=1 && break
+    done
+fi
+
+SO_PATH="$SCRIPT_DIR/LGTBot_ElainaBot.so"
+if [[ $WANT_SO -eq 1 ]]; then
+    if [[ ! -f "$SO_PATH" ]]; then
+        # 部分 CMake 版本不遵守 LIBRARY_OUTPUT_DIRECTORY，到 build/ 找
+        FOUND=$(find build -name 'LGTBot_ElainaBot.so' -print -quit || true)
+        if [[ -n "$FOUND" ]]; then
+            cp "$FOUND" "$SO_PATH"
+        fi
+    fi
+    if [[ ! -f "$SO_PATH" ]]; then
+        echo "[!] 编译完成但未找到 LGTBot_ElainaBot.so"
+        exit 1
+    fi
 fi
 
 echo
 echo "════════════════════════════════════════════════════════════════"
-echo " ✅ 编译成功"
-echo "    $SO_PATH"
+if [[ $WANT_SO -eq 1 ]]; then
+    echo " ✅ 编译成功"
+    echo "    $SO_PATH"
+else
+    echo " ✅ 已构建目标: ${TARGETS[*]}"
+fi
 echo "════════════════════════════════════════════════════════════════"
