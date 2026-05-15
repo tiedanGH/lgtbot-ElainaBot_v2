@@ -55,6 +55,39 @@ _LGT_MSG_EVENTS = frozenset({
 })
 
 
+# ──────── /开始 后的「刷新按钮使用说明」延迟提示 ─────────────────────────────
+_REFRESH_TIP_DELAY = 3.0   # 秒;等 C++ 引擎先把开局公告送达,提示不抢首屏
+
+_REFRESH_TIP_MD = (
+    '## 🔄 关于刷新按钮\n'
+    '\n'
+    '机器人每条消息**最多回复5条**，且**5分钟**后失效。\n'
+    '\n'
+    '✅ **点了** → 立即续 **5条** 新回复额度，游戏不间断\n'
+    '❌ **没点** → 配额耗尽后机器人将**无法继续回复**，影响游戏体验\n'
+    '\n'
+    '---'
+)
+
+
+async def _send_refresh_tip(event, gid: str, uid: str) -> None:
+    """延迟 `_REFRESH_TIP_DELAY` 秒,给玩家发一条独立的刷新按钮使用提示。
+
+    用 `event.reply` 走标准被动路径:消耗一条 msg_id 槽位(通常是第 2 条),
+    与引擎自身发的开局消息共用 5 条配额。教学用的两个 demo 刷新按钮被点
+    时同样能续配额,无副作用。
+    """
+    try:
+        await asyncio.sleep(_REFRESH_TIP_DELAY)
+        await event.reply(_REFRESH_TIP_MD,
+                          buttons=quota.build_refresh_demo_buttons())
+        message_log.log_outgoing(
+            gid or uid, not (event.is_group and gid),
+            '[刷新按钮使用说明]')
+    except Exception as e:
+        log.debug(f'刷新按钮使用说明发送失败: {e}')
+
+
 # ──────── 消息派发 ────────────────────────────────────────────────────────
 
 @handler(r'.*', name='LGTBot 消息派发', priority=-100, event_types=_LGT_MSG_EVENTS)
@@ -122,6 +155,14 @@ async def lgtbot_dispatch(event, match):
             ).start()
     except Exception as e:
         log.warning(f'派发消息失败: {e}')
+
+    # 「/开始」额外触发一条「刷新按钮使用说明」(3 秒延迟,独立消息),用户首次
+    # 看到第 4 / 5 条上的真刷新按钮前先有概念,减少漏点导致后续配额耗尽。
+    # 不去检测「房间里真的开局了吗」—— 不在房间时引擎只会回一句拒绝,代价是
+    # 多花 1 条 msg_id 槽位,可以接受;省下了从 C++ 那边回探"是否开局成功"的
+    # 反向通道。
+    if content == '/开始':
+        asyncio.create_task(_send_refresh_tip(event, gid, uid))
 
 
 # ──────── INTERACTION:两类 callback 按钮 ──────────────────────────────────
