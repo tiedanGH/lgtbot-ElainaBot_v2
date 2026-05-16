@@ -34,3 +34,11 @@ pending_buttons: dict[str, list] = _p['pending_buttons']  # 'g:gid'/'u:uid' → 
 # /新游戏 X 时记录;/加入 时回查给「📜 规则」按钮用 —— 跨热重载持久,
 # 进程重启即丢(失忆群按 /加入 时该按钮会缺规则,无大碍)。
 current_game: dict[str, str] = _p.setdefault('current_game', {})  # target_key → 游戏名
+# 运行时观测到 GROUP_MESSAGE_CREATE 事件的群 openid 集合 —— QQ 在 bot 管理后台
+# 给某群开了「全量推送」时,任何事件(包括 is_at_self=True 的 @ 消息)都会以
+# GROUP_MESSAGE_CREATE 投递。框架的 ``non_at_message.{enabled,group_whitelist}``
+# 是「是否把 non-AT 派给插件」的二级开关,QQ 没开的话框架 enabled=true 也没用;
+# QQ 开了但框架没开,我们 ignore_at_check=True 还是收得到。所以**真·全量群**
+# 标记应该来自实际投递的事件 —— dispatcher 看到 GROUP_MESSAGE_CREATE 就把 gid
+# 加进来,helpers.is_full_volume_group 优先看这个集合,再退回框架配置兜底。
+full_volume_groups: set[str] = _p.setdefault('full_volume_groups', set())

@@ -78,22 +78,39 @@ def run_coro_blocking(coro, timeout: float = 15.0):
 
 
 def is_full_volume_group(gid: str, appid: str = '') -> bool:
-    """判断 ``gid`` 在某个 bot 配置里是否开了「全量消息」(non-AT 接收)。
+    """判断 ``gid`` 是否是「全量推送」群。
 
-    主框架配置位 ``non_at_message.enabled`` (全局开关) + ``non_at_message
-    .group_whitelist`` (白名单)。任一为 True 即视为全量群。
+    两路信号,任一命中即视为全量:
+
+      1. **运行时观测**(主信号):dispatcher 见到 ``GROUP_MESSAGE_CREATE`` 事件
+         就把 gid 加进 ``state.full_volume_groups``。能投递到这条事件就说明 QQ
+         给本 bot 在该群授了全量权限 —— 这是最直接的事实。
+
+      2. **框架配置**(兜底):``non_at_message.enabled`` 或 ``non_at_message
+         .group_whitelist``,跟 ``core/plugin/_dispatch.py`` 一致。在**首次观测
+         到 GROUP_MESSAGE_CREATE 之前**(进程刚起没收过非 AT 消息),只能靠这条。
+
+    为什么需要主信号:QQ 官方 bot 的「全量推送」开关在 QQ 管理后台,框架的
+    ``non_at_message.*`` 是「框架是否把 non-AT 派给非 ignore_at_check 插件」的
+    二级开关。两者完全可以不一致 —— 用户在 QQ 后台开了但没改 bot.yaml 时,
+    我们走 ignore_at_check=True 收得到事件,但读框架配置会显示 False。运行时
+    观测能消除这个偏差。
 
     Args:
-        gid: 群 openid
-        appid: bot 的 appid。空字符串时遍历所有已加载 bot —— 任一 bot 视该
-               群为全量即返回 True。callbacks 路径上若已从 quota ref 拿到 appid
-               应优先传入,语义更精确。
-
-    ``cfg.get_bot_setting`` 自带 5s mtime 检查的缓存(``core/base/config.py``),
-    Web UI 改配置后约 5 秒生效,无需手动 invalidate。
+        gid: 群 openid。
+        appid: bot 的 appid,用于查框架配置兜底。空字符串时扫所有已加载 bot。
     """
     if not gid:
         return False
+
+    # 1. 运行时观测优先
+    try:
+        if gid in state.full_volume_groups:
+            return True
+    except Exception:
+        pass
+
+    # 2. 框架配置兜底
     try:
         from core.base.config import cfg
     except Exception:
