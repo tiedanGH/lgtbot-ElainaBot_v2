@@ -74,9 +74,16 @@ async def lgtbot_dispatch(event, match):
     if not state.started:
         return
 
-    # 群消息必须 @bot 才进 LGTBot 引擎,避免 r'.*' + ignore_at_check 把
-    # 日常对话也派给引擎(全量群里尤其重要)
-    if event.is_group and not getattr(event, 'is_at_self', False):
+    # 全量群里的日常对话必须挡掉(避免 r'.*' + ignore_at_check 把所有群消息
+    # 都派给引擎)。这道闸**只对 GROUP_MESSAGE_CREATE 应用**:
+    #   · GROUP_AT_MESSAGE_CREATE 的事件类型本身就意味着用户 @了 bot,但
+    #     parse_group_message 只在 payload 含 mentions 数组 + is_you=True 时
+    #     才把 is_at_self 置 True;QQ 官方 bot 的 AT_CREATE payload 不一定
+    #     带 mentions(GROUP_AT 的 AT 信号来自事件类型,不在 payload 里重复),
+    #     硬卡这道闸会把所有老的 AT_CREATE 流量误挡 —— 用户反馈过的现象。
+    #   · GROUP_MESSAGE_CREATE 是「全量群任意消息」,只有 is_at_self=True 才
+    #     该交给 LGTBot 引擎,其他是日常聊天。
+    if event.event_type == GROUP_MESSAGE_CREATE and not getattr(event, 'is_at_self', False):
         return
 
     content = (event.content or '').strip()
