@@ -75,3 +75,44 @@ def run_coro_blocking(coro, timeout: float = 15.0):
     except Exception as e:
         log.warning(f'协程执行异常: {e}')
         return None
+
+
+def is_full_volume_group(gid: str, appid: str = '') -> bool:
+    """判断 ``gid`` 在某个 bot 配置里是否开了「全量消息」(non-AT 接收)。
+
+    主框架配置位 ``non_at_message.enabled`` (全局开关) + ``non_at_message
+    .group_whitelist`` (白名单)。任一为 True 即视为全量群。
+
+    Args:
+        gid: 群 openid
+        appid: bot 的 appid。空字符串时遍历所有已加载 bot —— 任一 bot 视该
+               群为全量即返回 True。callbacks 路径上若已从 quota ref 拿到 appid
+               应优先传入,语义更精确。
+
+    ``cfg.get_bot_setting`` 自带 5s mtime 检查的缓存(``core/base/config.py``),
+    Web UI 改配置后约 5 秒生效,无需手动 invalidate。
+    """
+    if not gid:
+        return False
+    try:
+        from core.base.config import cfg
+    except Exception:
+        return False
+
+    def _check(aid: str) -> bool:
+        if cfg.get_bot_setting(aid, 'non_at_message.enabled', False):
+            return True
+        wl = cfg.get_bot_setting(aid, 'non_at_message.group_whitelist', []) or []
+        return gid in wl
+
+    if appid:
+        return _check(appid)
+
+    # 无 appid 上下文(配额耗尽 fallback 路径):扫所有已加载 bot
+    try:
+        from core.bot.manager import _bot_manager_ref
+        if _bot_manager_ref and _bot_manager_ref._bots:
+            return any(_check(aid) for aid in _bot_manager_ref._bots)
+    except Exception:
+        pass
+    return False

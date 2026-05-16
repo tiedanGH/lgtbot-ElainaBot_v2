@@ -118,7 +118,7 @@ python3 main.py         # 启动主框架，自动加载插件
 #   留空则该机器人无 LGTBot 管理员；可在 Web 面板「日志」查 user_id
 admin_uids: []
 # 被动消息配额（5条）耗尽时，等待用户点击「刷新」按钮的最长秒数
-#   超时后会用旧引用强制尝试发送（多半会失败）
+#   超时后改走主动消息（不再尝试用过期 msg_id 强发，避免必拒）
 #   推荐 5–30 秒：过短玩家来不及点，过长命令响应延迟明显
 refresh_wait_timeout: 15.0
 # 游戏图片走 markdown 内嵌时使用的图床（依赖主框架 image_hosting 模块）
@@ -133,12 +133,16 @@ image_hosting: ''
 | 字段                     | 类型          | 默认     | 说明                                                                                                     |
 |------------------------|-------------|--------|--------------------------------------------------------------------------------------------------------|
 | `admin_uids`           | `list[str]` | `[]`   | LGTBot 内部管理员的 QQ openid 列表                                                                             |
-| `refresh_wait_timeout` | `float`     | `15.0` | 配额耗尽时阻塞等待用户点击刷新按钮的秒数；超时改为强制发送                                                                          |
+| `refresh_wait_timeout` | `float`     | `15.0` | 配额耗尽时阻塞等待用户点击刷新按钮的秒数；超时改走主动消息（不再用过期 msg_id 强发）                                                         |
 | `image_hosting`        | `str`       | `''`   | markdown 图片内嵌使用的图床（`cos` / `nature` / `bilibili` / `chatglm` / `ukaka` / `xingye`），留空 = 直接走 msg_type=7 |
 
 > 💡 **图床（可选）**：启用 ElainaBot 主框架的 `image_hosting` 模块并配置目标图床后，把图床名填到本插件 `config.yaml` 的 `image_hosting` 字段
 > 本插件就会用 markdown `![](url)` 内嵌发送游戏图片（保留原生 `<@>` 提及和按钮）。**仅尝试指定的这一个图床**，上传失败立即回退 `msg_type=7` 媒体
 > 注意：图床域名需先在 QQ 开放平台「消息 URL 配置」里报备，否则消息不显示（COS 自有 CDN 与 Nature 的 download.nature.qq.com 最易过审）。
+
+> 💡 **全量群（可选）**：主框架 `config/bot.yaml` 里 `non_at_message.enabled` 或 `non_at_message.group_whitelist` 配的群，本插件会自动适配——
+> 监听 `GROUP_MESSAGE_CREATE`（仍强制 `is_at_self` 检查，日常对话不会触发引擎），且这些群里 bot 不再追加「刷新会话」按钮，被动配额耗尽时直接走主动消息。
+> 改动 `non_at_message.group_whitelist` 后约 5 秒（主框架配置 mtime 缓存）即生效，无需重启。
 
 **两种填写方式（任选其一）：**
 

@@ -88,10 +88,17 @@ def _consume_pending_tip(key: str, target_id: str, is_uid: bool) -> None:
 
     由两个发送回调(text / image)在 `run_coro_blocking` 同步返回后调用 ——
     那一刻引擎的开局公告已经送达 QQ,我们才能把教学提示安全地排在它后面。
+
+    全量群里 bot 不被 5 条/msg_id 限制,refresh 按钮永远不会出现 —— 这条
+    教学的整段文案(在讲怎么点刷新按钮)会变成误导。所以只清掉标记,不发送。
     """
-    if key in _pending_tip_keys:
-        _pending_tip_keys.discard(key)
-        _schedule_refresh_tip(target_id, is_uid)
+    if key not in _pending_tip_keys:
+        return
+    _pending_tip_keys.discard(key)
+    if (not is_uid) and helpers.is_full_volume_group(target_id):
+        log.debug(f'全量群 {target_id} 跳过刷新按钮使用说明')
+        return
+    _schedule_refresh_tip(target_id, is_uid)
 
 
 # ──────── 用户信息回调（被 LGTBot 引擎调用，需返回字符串） ─────────────────
@@ -221,47 +228,68 @@ def cb_send_text_message(target_id: str, is_uid: bool, msg: str):
 
 
 async def _send_text_quota_managed(target_id, is_uid, msg, extra_buttons):
-    """文本发送核心：配额管理 + 自动追加刷新按钮 + 配额满时等待续命"""
+    """文本发送核心：配额管理 + 自动追加刷新按钮 + 配额满时等待续命
+
+    全量群分支:配额耗尽时不再阻塞等刷新按钮,直接走主动消息(``kwargs={}``);
+    且整个生命周期不追加 ``build_refresh_button``,因为全量群里 bot 不被
+    5 条/msg_id 限制,这个教学按钮没有意义。
+    """
     key = helpers.target_key(target_id, is_uid)
     msg_preview = (msg or '')[:30].replace('\n', ' ')
 
     consumed = quota.try_consume_ref(key)
-    if consumed is None:
-        # 配额满 → 阻塞等待，不预先尝试发送（直接发也会被 QQ 拒）
-        import time as _t
-        wait_start = _t.monotonic()
-        log.info(f'⏳ [配额已满] {key} 已用 {quota.REF_QUOTA}/{quota.REF_QUOTA}，'
-                 f'阻塞等待刷新按钮 ≤{quota.REFRESH_WAIT_TIMEOUT:.0f}s | 待发: {msg_preview!r}')
-        consumed = await quota.wait_and_consume(key, quota.REFRESH_WAIT_TIMEOUT)
-        elapsed = _t.monotonic() - wait_start
-        if consumed is None:
-            # 等待超时 → 不丢弃，强制使用现有引用尝试发送（QQ 多半会拒，但试一下）
-            consumed = quota.try_consume_ref(key, ignore_quota=True)
-            if consumed is None:
-                log.warning(f'❌ [无引用] {key} 经 {elapsed:.1f}s 等待后丢失旧引用，'
-                            f'丢弃此条文本: {msg_preview!r}')
-                return
-            log.warning(f'⚠️ [超时强发] {key} 经 {elapsed:.1f}s 无刷新，'
-                        f'使用现有引用强制尝试发送: {msg_preview!r}')
-        else:
-            log.info(f'✅ [配额已刷新] {key} 等 {elapsed:.1f}s 后续命成功，重发文本')
+    # 全量群判定 —— 仅对群消息有意义;优先用刚 consume 出来的 appid,没有时
+    # 走 fallback 扫描(any-bot)
+    ref_appid_hint = consumed[3] if consumed else ''
+    is_full = (not is_uid) and helpers.is_full_volume_group(target_id, ref_appid_hint)
 
-    ref_type, ref_value, count, ref_appid = consumed
-    sender = helpers.get_sender(ref_appid)
+    if consumed is None:
+        if is_full:
+            # 全量群配额满 → 直接主动消息,不等刷新按钮
+            log.info(f'⚡ [全量群直推] {key} 配额已满,走主动消息: {msg_preview!r}')
+        else:
+            # 非全量群:配额满 → 阻塞等待，不预先尝试发送（直接发也会被 QQ 拒）
+            import time as _t
+            wait_start = _t.monotonic()
+            log.info(f'⏳ [配额已满] {key} 已用 {quota.REF_QUOTA}/{quota.REF_QUOTA}，'
+                     f'阻塞等待刷新按钮 ≤{quota.REFRESH_WAIT_TIMEOUT:.0f}s | 待发: {msg_preview!r}')
+            consumed = await quota.wait_and_consume(key, quota.REFRESH_WAIT_TIMEOUT)
+            elapsed = _t.monotonic() - wait_start
+            if consumed is None:
+                # 等待超时 → 改走主动消息(无 msg_id/event_id)。
+                # 旧实现是用 ignore_quota=True 强行复用现有引用,但那条 msg_id
+                # 这时大概率已经过 5 分钟到期,QQ 必拒;主动消息不依赖引用,
+                # bot 若在该群/用户上有主动 quota 还能落地,语义更干净。
+                # consumed 仍为 None,继续往下走全量群分支共享的主动消息路径。
+                log.warning(f'⏰ [刷新超时,改主动] {key} 经 {elapsed:.1f}s 无刷新，'
+                            f'放弃过期 msg_id,改走主动消息: {msg_preview!r}')
+            else:
+                log.info(f'✅ [配额已刷新] {key} 等 {elapsed:.1f}s 后续命成功，重发文本')
+
+    # 准备 sender / kwargs。consumed 仍为 None 即主动路径(全量群直推 / 刷新超时兜底)。
+    if consumed is not None:
+        ref_type, ref_value, count, ref_appid = consumed
+        sender = helpers.get_sender(ref_appid)
+        kwargs = {ref_type: ref_value}
+    else:
+        # 全量群主动路径:无 ref / 无 appid;用任一可用 sender,kwargs 空
+        sender = helpers.get_sender('')
+        count = 0
+        kwargs = {}
     if sender is None:
         log.warning(f'无可用 sender，丢弃文本消息 → {target_id}')
         return
 
-    # 第 4 条起追加刷新按钮；第 5 条（达到上限）用「⚠️ 最终刷新」加强提示
+    # 第 4 条起追加刷新按钮;第 5 条（达到上限）用「⚠️ 最终刷新」加强提示。
+    # 全量群从不追加(bot 不被 5 条/msg_id 限制,这个教学按钮没意义)。
     btns = list(extra_buttons) if extra_buttons else []
-    is_last = (count >= quota.REF_QUOTA)
-    if count >= quota.REFRESH_BUTTON_THRESHOLD:
+    if not is_full and count >= quota.REFRESH_BUTTON_THRESHOLD:
+        is_last = (count >= quota.REF_QUOTA)
         btns.append(quota.build_refresh_button(is_last=is_last))
         tag = '⚠️' if is_last else '🔄'
         log.info(f'📊 [配额追踪] {key} 已用 {count}/{quota.REF_QUOTA} → {tag}')
     btns_arg = btns if btns else None
 
-    kwargs = {ref_type: ref_value}
     try:
         with log_attribution.mark_outbound():
             if is_uid:
@@ -329,28 +357,40 @@ async def _send_image_quota_managed(target_id, is_uid, data, raw_content, filena
          `![](url)` 内嵌；保留 `<@openid>` 原生 mention，可挂刷新按钮
       B. 媒体兜底：图床未启用 / 上传失败时走原有 msg_type=7 路径（content
          字段需 humanize mentions，无法挂按钮）
+
+    全量群配额耗尽时不等刷新按钮,直接主动消息(``ref_type=''`` 透传到下游)。
     """
     key = helpers.target_key(target_id, is_uid)
     consumed = quota.try_consume_ref(key)
-    if consumed is None:
-        import time as _t
-        wait_start = _t.monotonic()
-        log.info(f'⏳ [配额已满] {key} 已用 {quota.REF_QUOTA}/{quota.REF_QUOTA}，'
-                 f'阻塞等待刷新按钮 ≤{quota.REFRESH_WAIT_TIMEOUT:.0f}s | 待发: [图片]')
-        consumed = await quota.wait_and_consume(key, quota.REFRESH_WAIT_TIMEOUT)
-        elapsed = _t.monotonic() - wait_start
-        if consumed is None:
-            consumed = quota.try_consume_ref(key, ignore_quota=True)
-            if consumed is None:
-                log.warning(f'❌ [无引用] {key} 经 {elapsed:.1f}s 等待后丢失旧引用，丢弃此条图片')
-                return
-            log.warning(f'⚠️ [超时强发] {key} 经 {elapsed:.1f}s 无刷新，'
-                        f'强制使用现有引用尝试发送图片')
-        else:
-            log.info(f'✅ [配额已刷新] {key} 等 {elapsed:.1f}s 后续命成功，重发图片')
+    ref_appid_hint = consumed[3] if consumed else ''
+    is_full = (not is_uid) and helpers.is_full_volume_group(target_id, ref_appid_hint)
 
-    ref_type, ref_value, count, ref_appid = consumed
-    sender = helpers.get_sender(ref_appid)
+    if consumed is None:
+        if is_full:
+            log.info(f'⚡ [全量群直推] {key} 配额已满,图片走主动消息')
+        else:
+            import time as _t
+            wait_start = _t.monotonic()
+            log.info(f'⏳ [配额已满] {key} 已用 {quota.REF_QUOTA}/{quota.REF_QUOTA}，'
+                     f'阻塞等待刷新按钮 ≤{quota.REFRESH_WAIT_TIMEOUT:.0f}s | 待发: [图片]')
+            consumed = await quota.wait_and_consume(key, quota.REFRESH_WAIT_TIMEOUT)
+            elapsed = _t.monotonic() - wait_start
+            if consumed is None:
+                # 等待超时 → 改走主动消息(理由同 _send_text_quota_managed:
+                # 过期 msg_id 强发必拒,主动消息至少留一条出路)。
+                log.warning(f'⏰ [刷新超时,改主动] {key} 经 {elapsed:.1f}s 无刷新，'
+                            f'放弃过期 msg_id,图片改走主动消息')
+            else:
+                log.info(f'✅ [配额已刷新] {key} 等 {elapsed:.1f}s 后续命成功，重发图片')
+
+    # 准备 sender / ref tuple。consumed 仍为 None 即全量群主动路径,
+    # 用空 ref_type/ref_value 透传到下游,下游靠 ref_type 为空切换 kwargs={}。
+    if consumed is not None:
+        ref_type, ref_value, count, ref_appid = consumed
+        sender = helpers.get_sender(ref_appid)
+    else:
+        ref_type, ref_value, count = '', '', 0
+        sender = helpers.get_sender('')
     if sender is None:
         log.warning(f'无可用 sender，丢弃图片 → {target_id}')
         return
@@ -360,7 +400,8 @@ async def _send_image_quota_managed(target_id, is_uid, data, raw_content, filena
     image_url = await uploader.upload_image(data, filename, user_id=user_id_for_cos)
     if image_url:
         if await _send_markdown_image(sender, target_id, is_uid, ref_type, ref_value,
-                                      raw_content, image_url, data, count):
+                                      raw_content, image_url, data, count,
+                                      is_full=is_full):
             return
         # markdown 发送失败（极少见，比如域名未报备被 QQ 拒）→ 落回 media
 
@@ -369,8 +410,13 @@ async def _send_image_quota_managed(target_id, is_uid, data, raw_content, filena
 
 
 async def _send_markdown_image(sender, target_id, is_uid, ref_type, ref_value,
-                               raw_content, image_url, data, count) -> bool:
-    """构造 markdown 文本 + 图片 + 按钮，调 send_to_*。成功返回 True"""
+                               raw_content, image_url, data, count,
+                               *, is_full: bool = False) -> bool:
+    """构造 markdown 文本 + 图片 + 按钮，调 send_to_*。成功返回 True。
+
+    ``ref_type=''`` 表示主动消息(全量群配额耗尽路径):kwargs 留空,
+    不带 msg_id/event_id。``is_full=True`` 时同样跳过刷新按钮追加。
+    """
     width, height = uploader.get_image_size(data)
     parts = []
     if raw_content:
@@ -378,14 +424,14 @@ async def _send_markdown_image(sender, target_id, is_uid, ref_type, ref_value,
     parts.append(f'![image #{width}px #{height}px]({image_url})')
     md = '\n\n'.join(parts)
 
-    # markdown 通道支持挂按钮（不像 msg_type=7）
+    # markdown 通道支持挂按钮（不像 msg_type=7);全量群从不挂刷新按钮
     btns: list = []
-    is_last = (count >= quota.REF_QUOTA)
-    if count >= quota.REFRESH_BUTTON_THRESHOLD:
+    if not is_full and count >= quota.REFRESH_BUTTON_THRESHOLD:
+        is_last = (count >= quota.REF_QUOTA)
         btns.append(quota.build_refresh_button(is_last=is_last))
     btns_arg = btns if btns else None
 
-    kwargs = {ref_type: ref_value}
+    kwargs = {ref_type: ref_value} if ref_type else {}
     try:
         with log_attribution.mark_outbound():
             if is_uid:
@@ -401,7 +447,10 @@ async def _send_markdown_image(sender, target_id, is_uid, ref_type, ref_value,
 async def _send_media_fallback(sender, target_id, is_uid, ref_type, ref_value,
                                raw_content, data):
     """msg_type=7 媒体消息兜底：上传 file_info → send_to_* with media。
-    media 不解析 <@openid>，content 这里要先 humanize 成可读 @昵称。"""
+    media 不解析 <@openid>，content 这里要先 humanize 成可读 @昵称。
+
+    ``ref_type=''`` 表示主动消息(全量群配额耗尽路径):kwargs 留空。
+    """
     from core.message.media import upload_media_bytes  # 延迟导入
 
     prefix = 'users' if is_uid else 'groups'
@@ -417,7 +466,7 @@ async def _send_media_fallback(sender, target_id, is_uid, ref_type, ref_value,
 
     rendered_content = helpers.humanize_mentions(raw_content)
     media_dict = {'file_info': file_info}
-    kwargs = {ref_type: ref_value}
+    kwargs = {ref_type: ref_value} if ref_type else {}
     try:
         with log_attribution.mark_outbound():
             if is_uid:

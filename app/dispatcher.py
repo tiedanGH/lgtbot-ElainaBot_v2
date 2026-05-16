@@ -17,7 +17,7 @@ import threading
 from core.plugin.decorators import handler
 from core.base.logger import get_logger, PLUGIN
 from core.message.event import (
-    GROUP_AT_MESSAGE_CREATE, C2C_MESSAGE_CREATE,
+    GROUP_AT_MESSAGE_CREATE, GROUP_MESSAGE_CREATE, C2C_MESSAGE_CREATE,
     AT_MESSAGE_CREATE, DIRECT_MESSAGE_CREATE,
     INTERACTION_CREATE,
 )
@@ -49,18 +49,34 @@ async def _resolve_menu_logo() -> dict | None:
         return None
 
 # 本插件监听的消息事件类型
+# 加 GROUP_MESSAGE_CREATE 是为了适配「全量群」场景:某些 QQ 部署下,即便用户
+# @了 bot,事件也会走 GROUP_MESSAGE_CREATE + is_at_self=True 而非 GROUP_AT_*。
+# 但配合 ignore_at_check=True 后,框架也会把日常对话(is_at_self=False) 投递过来,
+# handler 内必须再过一道 is_at_self 闸,见 lgtbot_dispatch 第一段。
 _LGT_MSG_EVENTS = frozenset({
-    GROUP_AT_MESSAGE_CREATE, C2C_MESSAGE_CREATE,
+    GROUP_AT_MESSAGE_CREATE, GROUP_MESSAGE_CREATE, C2C_MESSAGE_CREATE,
     AT_MESSAGE_CREATE, DIRECT_MESSAGE_CREATE,
 })
 
 
 # ──────── 消息派发 ────────────────────────────────────────────────────────
 
-@handler(r'.*', name='LGTBot 消息派发', priority=-100, event_types=_LGT_MSG_EVENTS)
+@handler(r'.*', name='LGTBot 消息派发', priority=-100,
+         event_types=_LGT_MSG_EVENTS, ignore_at_check=True)
 async def lgtbot_dispatch(event, match):
-    """将所有群 @ / 私聊消息派发给 LGTBot 引擎（不消费事件，其他插件仍可处理）"""
+    """将所有群 @ / 私聊消息派发给 LGTBot 引擎（不消费事件，其他插件仍可处理）。
+
+    ``ignore_at_check=True`` 让框架把全量群的 non-AT 消息也派进来,但本 handler
+    regex 是 ``.*`` 会吞日常对话 —— 所以本体里强制再过一道 is_at_self 闸:
+    群里没 @bot 的消息直接 return,等同于 LGTBot 仍只对 @bot 触发响应。
+    (私聊 / 频道私信不受影响,本身没有「@」概念。)
+    """
     if not state.started:
+        return
+
+    # 群消息必须 @bot 才进 LGTBot 引擎,避免 r'.*' + ignore_at_check 把
+    # 日常对话也派给引擎(全量群里尤其重要)
+    if event.is_group and not getattr(event, 'is_at_self', False):
         return
 
     content = (event.content or '').strip()
