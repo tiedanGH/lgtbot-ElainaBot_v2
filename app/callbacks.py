@@ -43,25 +43,20 @@ _REFRESH_TIP_MD = (
     '机器人每条消息**最多回复5条**，且**5分钟**后失效。\n'
     '\n'
     '✅ **点了** → 立即续 **5条** 新回复额度，游戏不间断\n'
-    '❌ **没点** → 配额耗尽后机器人将**无法继续回复**，将影响游戏体验\n'
-    '\n'
-    '---'
+    '❌ **没点** → 配额耗尽后机器人将**无法继续回复**，将影响游戏体验'
 )
 
 
 async def _send_refresh_tip(target_id: str, is_uid: bool) -> None:
-    """走标准 `_send_text_quota_managed` 通道发出教学提示。
+    """走标准 `_send_text_quota_managed` 通道发出教学提示(纯文案,无 demo 按钮)。
 
-    用引擎的发送通道而非 `event.reply`:
-      · 自动复用当前 target 的引用配额(msg_id / event_id 都行)
-      · 配额耗尽时按引擎规则等待 ≤15s,与正常游戏消息一致
-      · 教学按钮带的是真 RELAY_BUTTON_DATA,被点击就续配额,无副作用
+    第 4 / 5 条配额上的真正刷新按钮由 ``_send_text_quota_managed`` 按 count 自动
+    挂载,这条教学消息本身不再追加示例按钮 —— 避免视觉重复 + 让文案干净。
     """
     try:
         message_log.log_outgoing(target_id, is_uid, _REFRESH_TIP_MD)
         await _send_text_quota_managed(
-            target_id, is_uid, _REFRESH_TIP_MD,
-            quota.build_refresh_demo_buttons())
+            target_id, is_uid, _REFRESH_TIP_MD, None)
     except Exception as e:
         log.debug(f'刷新按钮使用说明发送失败 ({target_id}): {e}')
 
@@ -238,10 +233,10 @@ async def _send_text_quota_managed(target_id, is_uid, msg, extra_buttons):
     msg_preview = (msg or '')[:30].replace('\n', ' ')
 
     consumed = quota.try_consume_ref(key)
-    # 全量群判定 —— 仅对群消息有意义;优先用刚 consume 出来的 appid,没有时
-    # 走 fallback 扫描(any-bot)
-    ref_appid_hint = consumed[3] if consumed else ''
-    is_full = (not is_uid) and helpers.is_full_volume_group(target_id, ref_appid_hint)
+    # 全量群判定:只看运行时观测到的事实(state.full_volume_groups),不再退回
+    # 框架 non_at_message.* 配置 —— 配置可能与 QQ 后台权限不同步,误判会让
+    # 非全量群也走主动消息(QQ 必拒,把 bot 的配额烧掉)。
+    is_full = (not is_uid) and helpers.is_full_volume_group(target_id)
 
     if consumed is None:
         if is_full:
@@ -359,8 +354,8 @@ async def _send_image_quota_managed(target_id, is_uid, data, raw_content, filena
     """
     key = helpers.target_key(target_id, is_uid)
     consumed = quota.try_consume_ref(key)
-    ref_appid_hint = consumed[3] if consumed else ''
-    is_full = (not is_uid) and helpers.is_full_volume_group(target_id, ref_appid_hint)
+    # 同 _send_text_quota_managed: 只看运行时观测,不退回框架配置
+    is_full = (not is_uid) and helpers.is_full_volume_group(target_id)
 
     if consumed is None:
         if is_full:

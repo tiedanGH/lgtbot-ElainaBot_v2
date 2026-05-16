@@ -77,59 +77,35 @@ def run_coro_blocking(coro, timeout: float = 15.0):
         return None
 
 
-def is_full_volume_group(gid: str, appid: str = '') -> bool:
-    """判断 ``gid`` 是否是「全量推送」群。
+def is_full_volume_group(gid: str) -> bool:
+    """判断 ``gid`` 是否是「全量推送」群 —— 只信任**运行时观测**到的事实。
 
-    两路信号,任一命中即视为全量:
+    判定唯一依据:``state.full_volume_groups`` 集合,由 dispatcher 在见到
+    ``GROUP_MESSAGE_CREATE`` 事件时填入。
 
-      1. **运行时观测**(主信号):dispatcher 见到 ``GROUP_MESSAGE_CREATE`` 事件
-         就把 gid 加进 ``state.full_volume_groups``。能投递到这条事件就说明 QQ
-         给本 bot 在该群授了全量权限 —— 这是最直接的事实。
+    为什么不再退回框架 ``non_at_message.{enabled,group_whitelist}`` 配置:
 
-      2. **框架配置**(兜底):``non_at_message.enabled`` 或 ``non_at_message
-         .group_whitelist``,跟 ``core/plugin/_dispatch.py`` 一致。在**首次观测
-         到 GROUP_MESSAGE_CREATE 之前**(进程刚起没收过非 AT 消息),只能靠这条。
+      · QQ 的全量推送权限是在 **QQ 官方 bot 管理后台**给单个 (bot, 群) 维度开
+        的;开了之后 QQ 才会向 bot 投递 ``GROUP_MESSAGE_CREATE`` 事件。
+      · 框架 ``non_at_message.*`` 配置只是「框架收到 non-AT 后,要不要派给
+        非 ``ignore_at_check`` 插件」的二级开关 —— 它和 QQ 后台权限**不同步**,
+        可以一边开一边关。
+      · 当用户在 ``bot.yaml`` 里写了 ``group_whitelist``、但 QQ 后台并没真给
+        权限时,该群永远不会有 ``GROUP_MESSAGE_CREATE`` 投来。这时 helper 若
+        信任配置就会把非全量群误判为全量,引发**非全量群里漏挂刷新按钮、
+        被动配额耗尽后乱走主动消息**(用户反馈的现象)。
+      · 框架自身在 ``core/bot/event.py::_record_full_access_group`` 也是按
+        实际收到 ``GROUP_MESSAGE_CREATE`` 来记录全量群的(内存 cache + SQLite
+        表 ``full_access_groups``),并不查 ``non_at_message.*`` —— 这进一步
+        说明运行时观测才是 ground truth。
 
-    为什么需要主信号:QQ 官方 bot 的「全量推送」开关在 QQ 管理后台,框架的
-    ``non_at_message.*`` 是「框架是否把 non-AT 派给非 ignore_at_check 插件」的
-    二级开关。两者完全可以不一致 —— 用户在 QQ 后台开了但没改 bot.yaml 时,
-    我们走 ignore_at_check=True 收得到事件,但读框架配置会显示 False。运行时
-    观测能消除这个偏差。
-
-    Args:
-        gid: 群 openid。
-        appid: bot 的 appid,用于查框架配置兜底。空字符串时扫所有已加载 bot。
+    取舍:进程首次启动后,第一次在某全量群收到 non-AT 消息前,helper 会暂时
+    返回 False(空集合);该窗口里第一条引擎回复会按非全量逻辑挂刷新按钮 —— 视觉上多一个按钮,无功能损失。一旦任何 non-AT 消息到达,集合即标记,
+    后续行为正确。
     """
     if not gid:
         return False
-
-    # 1. 运行时观测优先
     try:
-        if gid in state.full_volume_groups:
-            return True
-    except Exception:
-        pass
-
-    # 2. 框架配置兜底
-    try:
-        from core.base.config import cfg
+        return gid in state.full_volume_groups
     except Exception:
         return False
-
-    def _check(aid: str) -> bool:
-        if cfg.get_bot_setting(aid, 'non_at_message.enabled', False):
-            return True
-        wl = cfg.get_bot_setting(aid, 'non_at_message.group_whitelist', []) or []
-        return gid in wl
-
-    if appid:
-        return _check(appid)
-
-    # 无 appid 上下文(配额耗尽 fallback 路径):扫所有已加载 bot
-    try:
-        from core.bot.manager import _bot_manager_ref
-        if _bot_manager_ref and _bot_manager_ref._bots:
-            return any(_check(aid) for aid in _bot_manager_ref._bots)
-    except Exception:
-        pass
-    return False

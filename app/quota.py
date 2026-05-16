@@ -154,16 +154,3 @@ def build_refresh_button(is_last: bool = False) -> list:
         'type': 1,
         'style': style,
     }]
-
-
-def build_refresh_demo_buttons() -> list:
-    """两种刷新按钮样式上下排列(每行一个),供「刷新按钮使用说明」教学提示用。
-
-    被点也是真刷新 —— 走 dispatcher.lgtbot_interaction_relay 的 ack + 续 event_id
-    配额路径,所以教学按钮即便被试点也只是给当前 INTERACTION 续了 5 条新额度,
-    没有副作用。
-    """
-    return [
-        build_refresh_button(is_last=False),  # 🔄 刷新会话
-        build_refresh_button(is_last=True),   # ⚠️ 最终刷新
-    ]
