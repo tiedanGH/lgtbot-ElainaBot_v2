@@ -246,7 +246,7 @@ async def _send_text_quota_managed(target_id, is_uid, msg, extra_buttons):
     if consumed is None:
         if is_full:
             # 全量群配额满 → 直接主动消息,不等刷新按钮
-            log.info(f'⚡ [全量群直推] {key} 配额已满,走主动消息: {msg_preview!r}')
+            log.info(f'⚡ [全量群直推] {key} 配额已满，走主动消息: {msg_preview!r}')
         else:
             # 非全量群:配额满 → 阻塞等待，不预先尝试发送（直接发也会被 QQ 拒）
             import time as _t
@@ -257,12 +257,9 @@ async def _send_text_quota_managed(target_id, is_uid, msg, extra_buttons):
             elapsed = _t.monotonic() - wait_start
             if consumed is None:
                 # 等待超时 → 改走主动消息(无 msg_id/event_id)。
-                # 旧实现是用 ignore_quota=True 强行复用现有引用,但那条 msg_id
-                # 这时大概率已经过 5 分钟到期,QQ 必拒;主动消息不依赖引用,
                 # bot 若在该群/用户上有主动 quota 还能落地,语义更干净。
                 # consumed 仍为 None,继续往下走全量群分支共享的主动消息路径。
-                log.warning(f'⏰ [刷新超时,改主动] {key} 经 {elapsed:.1f}s 无刷新，'
-                            f'放弃过期 msg_id,改走主动消息: {msg_preview!r}')
+                log.warning(f'⏰ [超时强发] {key} 经 {elapsed:.1f}s 无刷新，尝试发送主动消息')
             else:
                 log.info(f'✅ [配额已刷新] {key} 等 {elapsed:.1f}s 后续命成功，重发文本')
 
@@ -367,7 +364,7 @@ async def _send_image_quota_managed(target_id, is_uid, data, raw_content, filena
 
     if consumed is None:
         if is_full:
-            log.info(f'⚡ [全量群直推] {key} 配额已满,图片走主动消息')
+            log.info(f'⚡ [全量群直推] {key} 配额已满，图片走主动消息')
         else:
             import time as _t
             wait_start = _t.monotonic()
@@ -378,8 +375,7 @@ async def _send_image_quota_managed(target_id, is_uid, data, raw_content, filena
             if consumed is None:
                 # 等待超时 → 改走主动消息(理由同 _send_text_quota_managed:
                 # 过期 msg_id 强发必拒,主动消息至少留一条出路)。
-                log.warning(f'⏰ [刷新超时,改主动] {key} 经 {elapsed:.1f}s 无刷新，'
-                            f'放弃过期 msg_id,图片改走主动消息')
+                log.warning(f'⏰ [超时强发] {key} 经 {elapsed:.1f}s 无刷新，尝试发送图片主动消息')
             else:
                 log.info(f'✅ [配额已刷新] {key} 等 {elapsed:.1f}s 后续命成功，重发图片')
 
