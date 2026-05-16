@@ -37,13 +37,21 @@ log = get_logger(PLUGIN, 'LGTBot')
 #      提示抢在开局公告前面送达。
 _pending_tip_keys: set[str] = set()
 
-_REFRESH_TIP_MD = (
-    '## 【重要】关于刷新按钮\n'
+_REFRESH_TIP_BASE = (
+    '## ⚠️ 消息回复限制\n'
+    '机器人每条消息**最多回复5次**，且**5分钟**后失效。\n'
+    '🔄 看到刷新按钮请**及时点击**，否则将影响机器人发消息和游戏进程。'
+)
+
+# 全量申请段 —— 只在群聊里拼到末尾,私信里没有「群号」概念,这段会显得突兀
+_REFRESH_TIP_GROUP_TAIL = (
     '\n'
-    '机器人每条消息**最多回复5条**，且**5分钟**后失效。\n'
     '\n'
-    '✅ **点了** → 立即续 **5条** 新回复额度，游戏不间断\n'
-    '❌ **没点** → 配额耗尽后机器人将**无法继续回复**，将影响游戏体验'
+    '> 💡 群主授权群聊消息权限后可规避此限制，@bot 发送：\n'
+    '```\n'
+    '全量申请 <本群群号>\n'
+    '```\n'
+    '> 然后按照图片提示进行操作'
 )
 
 
@@ -52,13 +60,16 @@ async def _send_refresh_tip(target_id: str, is_uid: bool) -> None:
 
     第 4 / 5 条配额上的真正刷新按钮由 ``_send_text_quota_managed`` 按 count 自动
     挂载,这条教学消息本身不再追加示例按钮 —— 避免视觉重复 + 让文案干净。
+
+    私信场景(``is_uid=True``) 不拼「全量申请」段 —— 私聊没有「群号」概念,
+    那段会显得突兀。群聊才完整呈现。
     """
+    msg = _REFRESH_TIP_BASE if is_uid else (_REFRESH_TIP_BASE + _REFRESH_TIP_GROUP_TAIL)
     try:
-        message_log.log_outgoing(target_id, is_uid, _REFRESH_TIP_MD)
-        await _send_text_quota_managed(
-            target_id, is_uid, _REFRESH_TIP_MD, None)
+        message_log.log_outgoing(target_id, is_uid, msg)
+        await _send_text_quota_managed(target_id, is_uid, msg, None)
     except Exception as e:
-        log.debug(f'刷新按钮使用说明发送失败 ({target_id}): {e}')
+        log.debug(f'消息回复限制说明发送失败 ({target_id}): {e}')
 
 
 def _schedule_refresh_tip(target_id: str, is_uid: bool) -> None:
@@ -241,7 +252,7 @@ async def _send_text_quota_managed(target_id, is_uid, msg, extra_buttons):
     if consumed is None:
         if is_full:
             # 全量群配额满 → 直接主动消息,不等刷新按钮
-            log.info(f'⚡ [全量群直推] {key} 配额已满，走主动消息: {msg_preview!r}')
+            log.info(f'⚡ [全量直推] {key} 配额已满，走主动消息: {msg_preview!r}')
         else:
             # 非全量群:配额满 → 阻塞等待，不预先尝试发送（直接发也会被 QQ 拒）
             import time as _t
@@ -258,7 +269,7 @@ async def _send_text_quota_managed(target_id, is_uid, msg, extra_buttons):
             else:
                 log.info(f'✅ [配额已刷新] {key} 等 {elapsed:.1f}s 后续命成功，重发文本')
 
-    # 准备 sender / kwargs。consumed 仍为 None 即主动路径(全量群直推 / 刷新超时兜底)。
+    # 准备 sender / kwargs。consumed 仍为 None 即主动路径(全量直推 / 刷新超时兜底)。
     if consumed is not None:
         ref_type, ref_value, count, ref_appid = consumed
         sender = helpers.get_sender(ref_appid)
@@ -359,7 +370,7 @@ async def _send_image_quota_managed(target_id, is_uid, data, raw_content, filena
 
     if consumed is None:
         if is_full:
-            log.info(f'⚡ [全量群直推] {key} 配额已满，图片走主动消息')
+            log.info(f'⚡ [全量直推] {key} 配额已满，图片走主动消息')
         else:
             import time as _t
             wait_start = _t.monotonic()
