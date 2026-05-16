@@ -94,6 +94,19 @@ def build_game_list_buttons() -> list[list[dict]]:
     ]]
 
 
+def build_full_volume_apply_button() -> list[list[dict]]:
+    """单按钮一行:「全量申请」(type=2,回填到输入框,用户自行补群号再发送)。
+
+    挂在非全量群的「消息回复限制」教学提示底部,与文案里给出的命令格式
+    ``全量申请 <本群群号>`` 对齐 —— 用户点完按钮后输入框出现「全量申请」,
+    再手动补群号即可。``type=2`` 不带 ``enter``,符合本插件按钮约定。
+    实际处理「全量申请」命令的是另一个插件,本插件只提供 UI 入口。
+    """
+    return [[
+        {'text': '全量权限申请', 'data': '全量申请', 'type': 2, 'style': 4},
+    ]]
+
+
 def build_about_buttons() -> list[list[dict]]:
     """/关于 回执底部附:左 适配层仓库,右 LGT-Bot 上游仓库。两个都是链接按钮
     (type=0,QQ 协议下点击直接跳转,无 style)。

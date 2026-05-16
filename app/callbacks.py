@@ -40,34 +40,41 @@ _pending_tip_keys: set[str] = set()
 _REFRESH_TIP_BASE = (
     '## ⚠️ 消息回复限制\n'
     '机器人每条消息**最多回复5次**，且**5分钟**后失效。\n'
-    '🔄 看到刷新按钮请**及时点击**，否则将影响机器人发消息和游戏进程。'
+    '🔄 ***请及时点击刷新按钮***，否则将**影响机器人发消息和游戏进程**。'
 )
 
 # 全量申请段 —— 只在群聊里拼到末尾,私信里没有「群号」概念,这段会显得突兀
 _REFRESH_TIP_GROUP_TAIL = (
     '\n'
     '\n'
-    '> 💡 群主授权群聊消息权限后可规避此限制，@bot 发送：\n'
-    '```\n'
-    '全量申请 <本群群号>\n'
-    '```\n'
+    '> 💡 群主授权群聊消息权限后可规避此限制，点击下方按钮发送：\n'
+    '> **全量申请 <本群群号>**\n'
     '> 然后按照图片提示进行操作'
 )
 
 
 async def _send_refresh_tip(target_id: str, is_uid: bool) -> None:
-    """走标准 `_send_text_quota_managed` 通道发出教学提示(纯文案,无 demo 按钮)。
+    """走标准 `_send_text_quota_managed` 通道发出教学提示。
 
-    第 4 / 5 条配额上的真正刷新按钮由 ``_send_text_quota_managed`` 按 count 自动
-    挂载,这条教学消息本身不再追加示例按钮 —— 避免视觉重复 + 让文案干净。
+    第 4 / 5 条配额上的真正刷新按钮由 ``_send_text_quota_managed`` 按 count
+    自动挂载;教学消息本身视场景另带「全量申请」按钮。
 
-    私信场景(``is_uid=True``) 不拼「全量申请」段 —— 私聊没有「群号」概念,
-    那段会显得突兀。群聊才完整呈现。
+    分支:
+      · 私信(``is_uid=True``):仅 BASE 段,无附加按钮 —— 私聊没有「群号」
+        概念,「全量申请」段会显得突兀。
+      · 群聊(``is_uid=False``):BASE + GROUP_TAIL 段,底部挂一行「全量申请」
+        type=2 按钮(回填到输入框,用户自行补群号再发);实际命令由另一个
+        插件实现,本插件只提供 UI 入口。
     """
-    msg = _REFRESH_TIP_BASE if is_uid else (_REFRESH_TIP_BASE + _REFRESH_TIP_GROUP_TAIL)
+    if is_uid:
+        msg = _REFRESH_TIP_BASE
+        extra = None
+    else:
+        msg = _REFRESH_TIP_BASE + _REFRESH_TIP_GROUP_TAIL
+        extra = buttons.build_full_volume_apply_button()
     try:
         message_log.log_outgoing(target_id, is_uid, msg)
-        await _send_text_quota_managed(target_id, is_uid, msg, None)
+        await _send_text_quota_managed(target_id, is_uid, msg, extra)
     except Exception as e:
         log.debug(f'消息回复限制说明发送失败 ({target_id}): {e}')
 
