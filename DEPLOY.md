@@ -135,6 +135,7 @@ image_hosting: ''
 | `admin_uids`           | `list[str]` | `[]`   | LGTBot 内部管理员的 QQ openid 列表                                                                             |
 | `refresh_wait_timeout` | `float`     | `15.0` | 配额耗尽时阻塞等待用户点击刷新按钮的秒数；超时改走主动消息（不再用过期 msg_id 强发）                                                         |
 | `image_hosting`        | `str`       | `''`   | markdown 图片内嵌使用的图床（`cos` / `nature` / `bilibili` / `chatglm` / `ukaka` / `xingye`），留空 = 直接走 msg_type=7 |
+| `crash_notify_group`   | `str`       | `''`   | 严重问题通知群 openid —— 引擎崩溃时向此群主动推送崩溃报告。留空 = 不推送。该群需给本 bot 开了全量推送权限,主动消息才能落地                                |
 
 > 💡 **图床（可选）**：启用 ElainaBot 主框架的 `image_hosting` 模块并配置目标图床后，把图床名填到本插件 `config.yaml` 的 `image_hosting` 字段
 > 本插件就会用 markdown `![](url)` 内嵌发送游戏图片（保留原生 `<@>` 提及和按钮）。**仅尝试指定的这一个图床**，上传失败立即回退 `msg_type=7` 媒体

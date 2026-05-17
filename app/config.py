@@ -7,6 +7,7 @@
   · refresh_wait_timeout: float      被动消息配额耗尽后等待刷新按钮的秒数
   · image_hosting: str               markdown 图片内嵌使用的单个图床名（留空 = 禁用）
   · menu_game_buttons: list[str]     欢迎菜单的游戏快捷按钮列表（自动按每行 3 个排版）
+  · crash_notify_group: str          严重问题通知群 openid（崩溃时向此群主动推报告）
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ DEFAULT_CONFIG = {
     'refresh_wait_timeout': 15.0,
     'image_hosting': '',
     'menu_game_buttons': list(_DEFAULT_MENU_GAMES),
+    'crash_notify_group': '',
 }
 CONFIG_COMMENTS = {
     'admin_uids': (
@@ -54,6 +56,14 @@ CONFIG_COMMENTS = {
         '#   默认每行 3 个按钮自动排版（默认 6 个游戏 = 2 行）\n'
         '#   留空列表 = 不显示游戏快捷按钮（菜单里仍有帮助/创建房间等其他按钮）\n'
         '#   游戏名需与 /游戏列表 输出一致，否则点击后引擎会回「未知的游戏名」'
+    ),
+    'crash_notify_group': (
+        'LGTBot 引擎严重问题通知群 openid —— 引擎触发段错误时,除了给玩家发\n'
+        '#   道歉外,还向此群主动推送一条崩溃报告(含信号 / 触发源 / 消息预览)。\n'
+        '#   留空 = 不推送。\n'
+        '#   通常填管理员监控的全量群 openid —— 该群需在 QQ 后台给本 bot 开了\n'
+        '#   「全量推送」权限,主动消息才会被 QQ 接受,否则推送会被拒绝(只打\n'
+        '#   warning,不影响道歉发送和 30s 后的整进程 execv 自启)。'
     ),
 }
 
@@ -123,7 +133,7 @@ def load_plugin_config() -> str:
 
 def _apply_runtime_tunables(cfg: dict):
     """把 config.yaml 中的可调字段下发到对应运行时模块"""
-    from . import quota, uploader, buttons as _buttons
+    from . import quota, uploader, buttons as _buttons, callbacks as _callbacks
 
     timeout = cfg.get('refresh_wait_timeout', 15.0)
     try:
@@ -166,3 +176,17 @@ def _apply_runtime_tunables(cfg: dict):
     if _buttons.MENU_GAMES != games:
         log.info(f'menu_game_buttons: {len(_buttons.MENU_GAMES)} → {len(games)} 个游戏')
         _buttons.MENU_GAMES = games
+
+    # 严重问题通知群 openid —— 引擎崩溃时往这里推送主动消息。
+    # 非 str 或空白 → 视为未配置(空字符串);callbacks.CRASH_NOTIFY_GROUP
+    # 在崩溃善后路径里读这个值,empty 跳过推送。
+    raw_notify = cfg.get('crash_notify_group', '')
+    if not isinstance(raw_notify, str):
+        log.warning(f'crash_notify_group 应为字符串，已忽略 (got {type(raw_notify).__name__})')
+        raw_notify = ''
+    notify_group = raw_notify.strip()
+    if _callbacks.CRASH_NOTIFY_GROUP != notify_group:
+        old = _callbacks.CRASH_NOTIFY_GROUP or '(未配置)'
+        new = notify_group or '(未配置)'
+        log.info(f'crash_notify_group: {old} → {new}')
+        _callbacks.CRASH_NOTIFY_GROUP = notify_group

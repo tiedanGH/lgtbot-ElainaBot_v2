@@ -39,8 +39,13 @@ _CRASH_APOLOGY_MD = (
     'LGT-Bot 引擎发生未预料的崩溃，**当前游戏已无法继续进行**。\n'
     '进程将在 **30 秒**后自动重启，所有进行中对局会丢失。\n'
     '\n'
-    '非常抱歉给您带来不便，请加入官方群 **1059834024** 联系管理员 **铁蛋 (2295824927)** 反馈崩溃详情，我们会尽快修复 🌹'
+    '崩溃报告已自动转发至官方交流群，非常抱歉给您带来不便，我们会尽快修复 🌹'
 )
+# 严重问题通知群 openid —— 由 config.py::_apply_runtime_tunables 按 yaml 配置覆盖。
+# 空字符串 = 不推送。设了的话,引擎崩溃时除了给玩家发道歉,还向此群主动推送
+# 一条崩溃报告。通常填管理员监控的全量群 —— 该群在 QQ 后台开了全量推送权限,
+# bot 才能向它走主动消息(没 msg_id 引用)。
+CRASH_NOTIFY_GROUP: str = ''
 # 信号编号 → 名称,日志里更可读
 _SIG_NAMES = {6: 'SIGABRT', 7: 'SIGBUS', 11: 'SIGSEGV'}
 _crash_handled = False             # 防多线程并发崩溃时重复触发善后
@@ -83,32 +88,43 @@ def cb_lgtbot_crashed(uid: str, gid: str, is_uid: bool, msg: str, sig: int) -> N
     if loop is None or loop.is_closed():
         # 没 loop 就只能立即退出让 supervisor 重启 —— 道歉就送不出了,但
         # 不至于卡死。
-        log.error('asyncio loop 不可用,直接 os.execv')
+        log.error('asyncio loop 不可用，直接 os.execv')
         try:
             os.execv(sys.executable, [sys.executable] + sys.argv)
         except Exception as e:
-            log.error(f'os.execv 失败,需 supervisor 兜底: {e}')
+            log.error(f'os.execv 失败，需 supervisor 兜底: {e}')
         return
     try:
         asyncio.run_coroutine_threadsafe(
-            _handle_crash_aftermath(uid, gid, is_uid, sig_name), loop)
+            _handle_crash_aftermath(uid, gid, is_uid, sig_name, target, preview), loop)
     except Exception as e:
-        log.error(f'调度崩溃善后失败,直接 os.execv: {e}')
+        log.error(f'调度崩溃善后失败，直接 os.execv: {e}')
         os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
-async def _handle_crash_aftermath(uid: str, gid: str, is_uid: bool, sig_name: str) -> None:
-    """asyncio 上跑:给触发崩溃的玩家发道歉,然后等够 _LGTBOT_CRASH_DELAY_S 再 execv。
+async def _handle_crash_aftermath(uid: str, gid: str, is_uid: bool,
+                                  sig_name: str, target: str, preview: str) -> None:
+    """asyncio 上跑:发道歉给玩家 + 发崩溃报告给通知群 + 倒计时 + execv。
 
-    发送和倒计时**并行**进行(``asyncio.create_task`` 后立刻进 sleep),避免发送
-    阻塞(quota 满时 ``_send_text_quota_managed`` 可能等 ≤15s)拖慢重启。
+    三步并行:
+      · 道歉(给触发崩溃的玩家,被动 msg_id 路径)
+      · 崩溃报告(给 ``CRASH_NOTIFY_GROUP`` 配的群,主动消息)
+      · ``asyncio.sleep(_LGTBOT_CRASH_DELAY_S)`` 倒计时
+
+    用 ``asyncio.create_task`` 把前两步丢出去后立刻进 sleep,避免发送阻塞
+    (quota 满时 ``_send_text_quota_managed`` 可能等 ≤15s)拖慢重启。
     """
     target_id = uid if is_uid else gid
     if target_id:
         asyncio.create_task(_try_send_crash_apology(target_id, is_uid))
 
+    notify_group = CRASH_NOTIFY_GROUP
+    if notify_group:
+        asyncio.create_task(_try_send_crash_notification(
+            notify_group, sig_name, target, preview))
+
     await asyncio.sleep(_LGTBOT_CRASH_DELAY_S)
-    log.error(f'🔁 {_LGTBOT_CRASH_DELAY_S:.0f}s 倒计时结束,执行 os.execv 自启 (因 {sig_name})')
+    log.error(f'🔁 {_LGTBOT_CRASH_DELAY_S:.0f}s 倒计时结束，执行 os.execv 自启 (因 {sig_name})')
     try:
         os.execv(sys.executable, [sys.executable] + sys.argv)
     except Exception as e:
@@ -126,6 +142,42 @@ async def _try_send_crash_apology(target_id: str, is_uid: bool) -> None:
         await _send_text_quota_managed(target_id, is_uid, _CRASH_APOLOGY_MD, None)
     except Exception as e:
         log.warning(f'崩溃道歉发送失败 ({target_id}): {e}')
+
+
+async def _try_send_crash_notification(notify_group: str, sig_name: str,
+                                       target: str, preview: str) -> None:
+    """向严重问题通知群推送一条**主动消息**汇报崩溃。
+
+    用 ``sender.send_to_group(group_id, content)`` 不带 ``msg_id``/``event_id``
+    走 push API —— 仅在通知群 QQ 后台给本 bot 开了「全量推送」权限时能落地。
+    没权限就会被 QQ 拒,这里只打 warning 不报错,30s 后 execv 照常进行。
+    """
+    sender = helpers.get_sender('')
+    if sender is None:
+        log.warning('无可用 sender，跳过崩溃通知群推送')
+        return
+
+    md = (
+        '$$\\textcolor{red}{\\Huge\\text{错误推送}}$$'
+        '\n'
+        '## 💥 LGT-Bot 引擎崩溃\n'
+        '\n'
+        '> 引擎发生致命错误导致程序崩溃，所有进行中对局丢失\n'
+        '\n'
+        f'- **信号**: `{sig_name}`\n'
+        f'- **触发源**: {target}\n'
+        f'- **消息预览**: `{preview}`\n'
+        '\n'
+        f'进程将在 **{_LGTBOT_CRASH_DELAY_S:.0f} 秒**后自动重启···\n'
+        f'\n'
+        f'> 💡 此消息为自动推送，请尽快联系开发者排查修复'
+    )
+    message_log.log_outgoing(notify_group, False, md)
+    try:
+        with log_attribution.mark_outbound():
+            await sender.send_to_group(notify_group, md)
+    except Exception as e:
+        log.warning(f'崩溃通知群推送失败 ({notify_group}): {e}')
 
 
 # ──────── 「刷新按钮使用说明」教学提示(game_started 触发,紧跟开局公告发出) ────
