@@ -27,6 +27,11 @@
 #include <iostream>
 #include <curl/curl.h>
 
+#include <csignal>
+#include <csetjmp>
+#include <cstring>
+#include <unistd.h>
+
 // ──── 全局 Python 回调句柄 ────────────────────────────────────────────────
 void* g_bot_core              = nullptr;
 PyObject* g_get_user_name     = nullptr;
@@ -51,6 +56,100 @@ public:
 private:
     PyThreadState* save_state;
 };
+
+// ──── SIGSEGV / SIGBUS 防护:不让 lgtbot 段错误带垮 Python 主框架 ──────────
+//
+// 设计:
+//   1. `OnPrivate/PublicMessage` 进入时把上下文(uid/gid/msg)写到 thread_local
+//      char 缓冲,然后 ``sigsetjmp`` 设回退点,再调 lgtbot。
+//   2. lgtbot 内部触发 SIGSEGV/SIGBUS → `SigSegvHandler` 只做 async-signal-safe
+//      操作(``write(2)`` 写一行 stderr + ``siglongjmp`` 跳出),其余收尾交给
+//      Python 侧。
+//   3. 回到 wrapper 后,GIL 状态不确定(`ReleaseGIL` 的 dtor 被 longjmp 跳过没跑,
+//      GIL 仍处于释放态),用 `PyGILState_Ensure` 重新拿;然后调 Python 模块
+//      ``plugins.LGTBot_ElainaBot.app.callbacks.cb_lgtbot_crashed`` 通知崩溃,
+//      Python 侧负责 WebUI 日志 / 发道歉 / 30s 后 os.execv 重启。
+//   4. `thread_local sigjmp_buf` 让多线程并发的引擎调用各自独立恢复 —— 信号
+//      处理器在出错线程上运行,读到的 TLS 就是该线程的,不会互相干扰。
+//   5. SIGSEGV 后 lgtbot 内部状态损坏,Python 侧拿到通知后立刻把 state.started
+//      置 False,避免后续派发去戳已经废了的引擎触发二次崩溃;30s 后 execv
+//      整进程重启,彻底重建。
+
+namespace {
+
+thread_local sigjmp_buf t_sigsegv_jmpbuf;
+thread_local volatile sig_atomic_t t_sigsegv_armed = 0;
+
+// 崩溃上下文:wrapper 在 sigsetjmp 之前填,longjmp 恢复后透传给 Python
+thread_local char t_crash_uid[128];
+thread_local char t_crash_gid[128];
+thread_local char t_crash_msg[512];
+thread_local volatile sig_atomic_t t_crash_is_uid = 0;
+
+// 信号处理器 —— 只能用 async-signal-safe 函数(POSIX 列出的那一小撮):
+// `write`、`raise`、`signal` 这类。**不能**用 printf / malloc / boost / Python C API。
+void SigSegvHandler(int sig, siginfo_t* /*info*/, void* /*ucontext*/)
+{
+    if (t_sigsegv_armed) {
+        t_sigsegv_armed = 0;
+        static const char banner[] =
+            "\n[LGTBot] FATAL: lgtbot SIGSEGV/SIGBUS captured, recovering\n";
+        ssize_t r = write(STDERR_FILENO, banner, sizeof(banner) - 1);
+        (void)r;
+        siglongjmp(t_sigsegv_jmpbuf, sig);
+    }
+    // 不在保护区(进程启动 / 其他 .so 出问题等):降回默认动作,杀进程
+    std::signal(sig, SIG_DFL);
+    raise(sig);
+}
+
+// 安装 SIGSEGV / SIGBUS handler。幂等 —— 由 Start 调用一次即可。
+void InstallSigSegvHandler() {
+    static bool installed = false;
+    if (installed) return;
+    installed = true;
+    struct sigaction sa;
+    std::memset(&sa, 0, sizeof(sa));
+    sa.sa_sigaction = SigSegvHandler;
+    sa.sa_flags = SA_SIGINFO | SA_NODEFER;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGSEGV, &sa, nullptr);
+    sigaction(SIGBUS,  &sa, nullptr);
+}
+
+// 把 C 字符串截断进 thread_local char 数组(在 sigsetjmp 之前调用,signal-safe)
+inline void StoreCtx(char* dst, size_t cap, const char* src) {
+    if (!src) { dst[0] = '\0'; return; }
+    size_t n = std::strlen(src);
+    if (n >= cap) n = cap - 1;
+    std::memcpy(dst, src, n);
+    dst[n] = '\0';
+}
+
+// longjmp 恢复后调:抢 GIL → 调 Python 的 cb_lgtbot_crashed → 留 GIL 给 boost::python
+// 故意不 PyGILState_Release —— wrapper 即将 return,boost::python 期望 GIL 还在;
+// 不平衡的 Ensure 在 30s 后整进程 execv,无后患。
+void NotifyCrashToPython(int sig) {
+    PyGILState_Ensure();
+    try {
+        namespace py = boost::python;
+        py::object mod = py::import("plugins.LGTBot_ElainaBot.app.callbacks");
+        mod.attr("cb_lgtbot_crashed")(
+            std::string(t_crash_uid),
+            std::string(t_crash_gid),
+            static_cast<bool>(t_crash_is_uid),
+            std::string(t_crash_msg),
+            static_cast<int>(sig));
+    } catch (...) {
+        // 兜底:连 Python 都喊不动,只能 stderr 留一句
+        static const char emsg[] = "[LGTBot] cb_lgtbot_crashed call failed\n";
+        ssize_t r = write(STDERR_FILENO, emsg, sizeof(emsg) - 1);
+        (void)r;
+        PyErr_Clear();
+    }
+}
+
+}  // anonymous namespace
 
 // ──── 回调实现 ────────────────────────────────────────────────────────────
 
@@ -363,6 +462,11 @@ bool Start(
         PyObject* send_image_message,
         PyObject* match_event)
 {
+    // 安装 SIGSEGV/SIGBUS 处理器(幂等)。放在 LGTBot_Create 之前,这样即便
+    // 引擎自身初始化阶段段错误也能被捕获 —— 不过此时 wrapper 没 arm,会走
+    // SIG_DFL 默认动作,跟改造前等价(进程退出)。
+    InstallSigSegvHandler();
+
     ReleaseGIL r;
     const LGTBot_Option option {
         .game_path_  = game_path,
@@ -394,14 +498,51 @@ bool Start(
 
 void OnPrivateMessage(const char* msg, const std::string& uid)
 {
-    ReleaseGIL r;
-    LGTBot_HandlePrivateRequest(g_bot_core, uid.c_str(), msg);
+    // 先记崩溃上下文(signal-safe 字符串拷贝),然后才设 sigsetjmp 回退点。
+    // 顺序很关键:sigsetjmp 之后到 lgtbot 调用之间出 SEGV 都会跳回这里,
+    // 那一刻 wrapper 期望 ctx 已经写好。
+    StoreCtx(t_crash_uid, sizeof(t_crash_uid), uid.c_str());
+    StoreCtx(t_crash_gid, sizeof(t_crash_gid), nullptr);
+    StoreCtx(t_crash_msg, sizeof(t_crash_msg), msg);
+    t_crash_is_uid = 1;
+
+    int sig = sigsetjmp(t_sigsegv_jmpbuf, 1);
+    if (sig == 0) {
+        // 正常路径:arm → 调 lgtbot → disarm,GIL 由 ReleaseGIL 管
+        t_sigsegv_armed = 1;
+        {
+            ReleaseGIL r;
+            LGTBot_HandlePrivateRequest(g_bot_core, uid.c_str(), msg);
+        }
+        t_sigsegv_armed = 0;
+        return;
+    }
+    // 从 SIGSEGV 跳回。ReleaseGIL 的 dtor 没跑(longjmp 不跑 C++ 栈展开),
+    // GIL 仍处于释放态。NotifyCrashToPython 内 PyGILState_Ensure 抢回 GIL
+    // 并故意不 Release —— wrapper return 时 boost::python 期望 GIL 持有。
+    t_sigsegv_armed = 0;
+    NotifyCrashToPython(sig);
 }
 
 void OnPublicMessage(const char* msg, const std::string& uid, const std::string& gid)
 {
-    ReleaseGIL r;
-    LGTBot_HandlePublicRequest(g_bot_core, gid.c_str(), uid.c_str(), msg);
+    StoreCtx(t_crash_uid, sizeof(t_crash_uid), uid.c_str());
+    StoreCtx(t_crash_gid, sizeof(t_crash_gid), gid.c_str());
+    StoreCtx(t_crash_msg, sizeof(t_crash_msg), msg);
+    t_crash_is_uid = 0;
+
+    int sig = sigsetjmp(t_sigsegv_jmpbuf, 1);
+    if (sig == 0) {
+        t_sigsegv_armed = 1;
+        {
+            ReleaseGIL r;
+            LGTBot_HandlePublicRequest(g_bot_core, gid.c_str(), uid.c_str(), msg);
+        }
+        t_sigsegv_armed = 0;
+        return;
+    }
+    t_sigsegv_armed = 0;
+    NotifyCrashToPython(sig);
 }
 
 bool ReleaseBotIfNoProcessingGames()

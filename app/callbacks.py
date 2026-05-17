@@ -16,6 +16,7 @@
 from __future__ import annotations
 import asyncio
 import os
+import sys
 import time
 
 from core.base.logger import get_logger, PLUGIN
@@ -23,6 +24,108 @@ from . import state, quota, helpers, boot, uploader, userdb, buttons, log_attrib
 from .webui import message_log
 
 log = get_logger(PLUGIN, 'LGTBot')
+
+
+# ──────── lgtbot 段错误恢复(C++ 桥接层 SigSegvHandler → 这里) ─────────────
+# 一旦 lgtbot 内部触发 SIGSEGV/SIGBUS,bridge 的 wrapper 用 sigsetjmp/siglongjmp
+# 把控制权拽回 Python,然后调本函数善后。注意此时 lgtbot 进程内状态损坏
+# (mutex/heap/pipe 都可能是脏的),所以这里**不再调任何 lgtbot 函数**,只做
+# Python 侧的事:发日志 + 给玩家道歉 + 调度 30s 后整进程 execv。
+
+_LGTBOT_CRASH_DELAY_S = 30.0       # 等多久 execv —— 留给道歉消息送达
+_CRASH_APOLOGY_MD = (
+    '## 💥 游戏模块发生致命错误\n'
+    '\n'
+    'LGT-Bot 引擎发生未预料的崩溃，**当前游戏已无法继续进行**。\n'
+    '进程将在 **30 秒**后自动重启，所有进行中对局会丢失。\n'
+    '\n'
+    '非常抱歉给您带来不便，请加入官方群 **1059834024** 联系管理员 **铁蛋 (2295824927)** 反馈崩溃详情，我们会尽快修复 🌹'
+)
+# 信号编号 → 名称,日志里更可读
+_SIG_NAMES = {6: 'SIGABRT', 7: 'SIGBUS', 11: 'SIGSEGV'}
+_crash_handled = False             # 防多线程并发崩溃时重复触发善后
+
+
+def cb_lgtbot_crashed(uid: str, gid: str, is_uid: bool, msg: str, sig: int) -> None:
+    """C++ bridge → Python:lgtbot 触发 SIGSEGV/SIGBUS 被 wrapper 捕获恢复后调本函数。
+
+    被调时 GIL 已由 wrapper 抢回(``PyGILState_Ensure``),Python C API 可用。
+    实际工作放到 asyncio loop 上跑 —— 这里只做最少同步操作,然后调度异步善后。
+    """
+    global _crash_handled
+    if _crash_handled:
+        # 多线程并发崩溃只处理第一条 —— 后面那些都是同一波连锁反应,30s 内
+        # 进程就会被 execv 替换,先把噪音压下去
+        return
+    _crash_handled = True
+
+    sig_name = _SIG_NAMES.get(sig, f'sig{sig}')
+    target = (f'用户 {uid}' if is_uid else f'群 {gid} 用户 {uid}')
+    preview = (msg or '')[:80].replace('\n', ' ')
+
+    # 关键 ERROR 日志 —— 主框架 WebUI 消息日志 / 全局日志都能看到
+    log.error('=' * 60)
+    log.error(f'💥 LGTBot 引擎崩溃 ({sig_name})')
+    log.error(f'   触发源: {target}')
+    log.error(f'   消息内容: {preview!r}')
+    log.error(f'   进程将在 {_LGTBOT_CRASH_DELAY_S:.0f}s 后 os.execv 自启，所有对局丢失')
+    log.error('=' * 60)
+
+    # 立刻挂掉引擎标记,避免 30s 重启窗口内 dispatcher 继续派发到已坏的 lgtbot
+    state.started = False
+    try:
+        boot.mark_engine_running(False)
+    except Exception:
+        pass
+
+    # 异步善后:发道歉 + 倒计时 + execv。C++ wrapper 即将 return,不能在这里阻塞。
+    loop = state.event_loop
+    if loop is None or loop.is_closed():
+        # 没 loop 就只能立即退出让 supervisor 重启 —— 道歉就送不出了,但
+        # 不至于卡死。
+        log.error('asyncio loop 不可用,直接 os.execv')
+        try:
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        except Exception as e:
+            log.error(f'os.execv 失败,需 supervisor 兜底: {e}')
+        return
+    try:
+        asyncio.run_coroutine_threadsafe(
+            _handle_crash_aftermath(uid, gid, is_uid, sig_name), loop)
+    except Exception as e:
+        log.error(f'调度崩溃善后失败,直接 os.execv: {e}')
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+
+
+async def _handle_crash_aftermath(uid: str, gid: str, is_uid: bool, sig_name: str) -> None:
+    """asyncio 上跑:给触发崩溃的玩家发道歉,然后等够 _LGTBOT_CRASH_DELAY_S 再 execv。
+
+    发送和倒计时**并行**进行(``asyncio.create_task`` 后立刻进 sleep),避免发送
+    阻塞(quota 满时 ``_send_text_quota_managed`` 可能等 ≤15s)拖慢重启。
+    """
+    target_id = uid if is_uid else gid
+    if target_id:
+        asyncio.create_task(_try_send_crash_apology(target_id, is_uid))
+
+    await asyncio.sleep(_LGTBOT_CRASH_DELAY_S)
+    log.error(f'🔁 {_LGTBOT_CRASH_DELAY_S:.0f}s 倒计时结束,执行 os.execv 自启 (因 {sig_name})')
+    try:
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+    except Exception as e:
+        # execv 罕见失败(sys.executable 失踪等),supervisor 仍可兜底
+        log.error(f'os.execv 失败，等待 supervisor 兜底: {e}')
+
+
+async def _try_send_crash_apology(target_id: str, is_uid: bool) -> None:
+    """走标准发送通道把道歉送达 —— 复用现有 quota/sender 设施。
+
+    注意不能挂额外按钮 —— 进程马上要 execv 重启,任何 callback 都会落空。
+    """
+    try:
+        message_log.log_outgoing(target_id, is_uid, _CRASH_APOLOGY_MD)
+        await _send_text_quota_managed(target_id, is_uid, _CRASH_APOLOGY_MD, None)
+    except Exception as e:
+        log.warning(f'崩溃道歉发送失败 ({target_id}): {e}')
 
 
 # ──────── 「刷新按钮使用说明」教学提示(game_started 触发,紧跟开局公告发出) ────
