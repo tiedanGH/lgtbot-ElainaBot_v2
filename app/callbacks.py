@@ -82,6 +82,11 @@ def cb_lgtbot_crashed(uid: str, gid: str, is_uid: bool, msg: str, sig: int) -> N
     log.error(f'💥 LGTBot 引擎崩溃 ({sig_name})')
     log.error(f'   触发源: {target}')
     log.error(f'   消息内容: {preview!r}')
+    # C++ bridge (SigSegvHandler → DumpCrashToFile) 已经把栈 dump 落盘到
+    # <plugin_dir>/LGTBot_CRASH_DUMPS/crash_<sec>_<pid>_<tid>.log,
+    # 管理员去那目录看最新文件就能拿到 backtrace + 信号上下文。
+    crash_dir = os.path.join(boot.PLUGIN_DIR, 'LGTBot_CRASH_DUMPS')
+    log.error(f'   栈 dump 目录: {crash_dir}/ (按 mtime 排序看最新)')
     log.error(f'   进程将在 {_LGTBOT_CRASH_DELAY_S:.0f}s 后 os.execv 自启，所有对局丢失')
     log.error('=' * 60)
 

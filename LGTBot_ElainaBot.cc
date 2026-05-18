@@ -30,7 +30,12 @@
 #include <csignal>
 #include <csetjmp>
 #include <cstring>
+#include <ctime>
 #include <unistd.h>
+#include <fcntl.h>
+#include <sys/stat.h>      // mkdir
+#include <sys/syscall.h>   // SYS_gettid
+#include <execinfo.h>      // backtrace, backtrace_symbols_fd
 
 // ──── 全局 Python 回调句柄 ────────────────────────────────────────────────
 void* g_bot_core              = nullptr;
@@ -86,16 +91,157 @@ thread_local char t_crash_gid[128];
 thread_local char t_crash_msg[512];
 thread_local volatile sig_atomic_t t_crash_is_uid = 0;
 
+// 崩溃栈 dump 文件夹绝对路径(`<plugin_dir>/LGTBot_CRASH_DUMPS`)。
+// 在 InstallSigSegvHandler 里由 game_path 推导一次,handler 只读。
+// 留 1024 字节足够装绝对路径 + 后缀。空字符串 = 推导失败,dump 跳过。
+char g_crash_dump_dir[1024] = {0};
+
+// ──────── async-signal-safe 串行写工具 ──────────────────────────────────────
+// 不用 printf/snprintf/fprintf —— 这些理论上可能调 locale 数据、可能死锁。
+// 全部手写,逻辑极简,只用 write(2) 这一个 syscall。
+inline void as_write_str(int fd, const char* s) {
+    if (!s) return;
+    size_t n = std::strlen(s);
+    ssize_t r = write(fd, s, n);
+    (void)r;
+}
+inline void as_write_n(int fd, const char* s, size_t n) {
+    ssize_t r = write(fd, s, n);
+    (void)r;
+}
+// 把 unsigned long 转成十进制字符串(末端对齐),返回首字符指针。
+// buf 至少 24 字节(2^64 最多 20 位 + 终止符 + 余量)。
+inline char* as_uint_to_dec(unsigned long v, char* end) {
+    *--end = '\0';
+    if (v == 0) {
+        *--end = '0';
+    } else {
+        while (v) {
+            *--end = static_cast<char>('0' + (v % 10));
+            v /= 10;
+        }
+    }
+    return end;
+}
+inline char* as_uint_to_hex(unsigned long v, char* end) {
+    static const char hex[] = "0123456789abcdef";
+    *--end = '\0';
+    if (v == 0) {
+        *--end = '0';
+    } else {
+        while (v) {
+            *--end = hex[v & 0xf];
+            v >>= 4;
+        }
+    }
+    return end;
+}
+inline void as_write_uint(int fd, unsigned long v) {
+    char buf[24];
+    as_write_str(fd, as_uint_to_dec(v, buf + sizeof(buf)));
+}
+inline void as_write_hex(int fd, unsigned long v) {
+    as_write_str(fd, "0x");
+    char buf[24];
+    as_write_str(fd, as_uint_to_hex(v, buf + sizeof(buf)));
+}
+
+// 把 dump 文件路径拼到 out:<dir>/crash_<sec>_<pid>_<tid>.log
+// 返回拼出的总长度(不含终止符);overflow 返回 0(handler 应丢弃 dump)。
+inline size_t as_build_dump_path(char* out, size_t cap,
+                                 const char* dir,
+                                 long sec, int pid, int tid)
+{
+    size_t len = 0;
+    auto try_append = [&](const char* s) -> bool {
+        size_t n = std::strlen(s);
+        if (len + n + 1 > cap) return false;
+        std::memcpy(out + len, s, n);
+        len += n;
+        out[len] = '\0';
+        return true;
+    };
+    char numbuf[24];
+    if (!try_append(dir)) return 0;
+    if (!try_append("/crash_")) return 0;
+    if (!try_append(as_uint_to_dec((unsigned long)sec, numbuf + sizeof(numbuf)))) return 0;
+    if (!try_append("_")) return 0;
+    if (!try_append(as_uint_to_dec((unsigned long)pid, numbuf + sizeof(numbuf)))) return 0;
+    if (!try_append("_")) return 0;
+    if (!try_append(as_uint_to_dec((unsigned long)tid, numbuf + sizeof(numbuf)))) return 0;
+    if (!try_append(".log")) return 0;
+    return len;
+}
+
+// 把崩溃信息 dump 到 g_crash_dump_dir/crash_<sec>_<pid>_<tid>.log
+// 所有调用必须是 async-signal-safe:open/write/close/mkdir/clock_gettime/
+// getpid/syscall(SYS_gettid)/backtrace/backtrace_symbols_fd。无 malloc。
+inline void DumpCrashToFile(int sig, siginfo_t* info) {
+    if (g_crash_dump_dir[0] == '\0') return;
+
+    // mkdir 在 Install 已经做过,但每次 dump 再 mkdir 一次防止有人手贱删了
+    // 文件夹;EEXIST 算成功,handler 不关心返回值。
+    (void)mkdir(g_crash_dump_dir, 0755);
+
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    pid_t pid = getpid();
+    pid_t tid = static_cast<pid_t>(syscall(SYS_gettid));
+
+    char path[1024];
+    size_t plen = as_build_dump_path(path, sizeof(path),
+                                     g_crash_dump_dir,
+                                     (long)ts.tv_sec, (int)pid, (int)tid);
+    if (plen == 0) return;
+
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd < 0) return;
+
+    as_write_str(fd, "=== LGTBot SEGV captured ===\n");
+    as_write_str(fd, "time_sec: ");  as_write_uint(fd, (unsigned long)ts.tv_sec);
+    as_write_str(fd, "\ntime_nsec: "); as_write_uint(fd, (unsigned long)ts.tv_nsec);
+    as_write_str(fd, "\nsignal: ");  as_write_uint(fd, (unsigned long)sig);
+    if (info) {
+        as_write_str(fd, "\nsi_addr: ");
+        as_write_hex(fd, reinterpret_cast<unsigned long>(info->si_addr));
+        as_write_str(fd, "\nsi_code: ");
+        as_write_uint(fd, (unsigned long)info->si_code);
+    }
+    as_write_str(fd, "\npid: ");  as_write_uint(fd, (unsigned long)pid);
+    as_write_str(fd, "\ntid: ");  as_write_uint(fd, (unsigned long)tid);
+    as_write_str(fd, "\nis_uid: "); as_write_uint(fd, (unsigned long)t_crash_is_uid);
+    as_write_str(fd, "\nuid: ");  as_write_str(fd, t_crash_uid);
+    as_write_str(fd, "\ngid: ");  as_write_str(fd, t_crash_gid);
+    as_write_str(fd, "\nmsg: ");  as_write_str(fd, t_crash_msg);
+    as_write_str(fd, "\n\n--- backtrace ---\n");
+
+    void* frames[64];
+    int frame_count = backtrace(frames, 64);
+    // backtrace_symbols_fd 不分配内存,直接 write(fd) —— 是为 signal handler
+    // 准备的,glibc 文档明示。
+    backtrace_symbols_fd(frames, frame_count, fd);
+    as_write_str(fd, "\n=== end ===\n");
+
+    close(fd);
+}
+
 // 信号处理器 —— 只能用 async-signal-safe 函数(POSIX 列出的那一小撮):
-// `write`、`raise`、`signal` 这类。**不能**用 printf / malloc / boost / Python C API。
-void SigSegvHandler(int sig, siginfo_t* /*info*/, void* /*ucontext*/)
+// `write`、`raise`、`signal`、`open`、`close`、`mkdir`、`clock_gettime`、
+// `backtrace*` 这类。**不能**用 printf / malloc / boost / Python C API。
+void SigSegvHandler(int sig, siginfo_t* info, void* /*ucontext*/)
 {
     if (t_sigsegv_armed) {
         t_sigsegv_armed = 0;
         static const char banner[] =
-            "\n[LGTBot] FATAL: lgtbot SIGSEGV/SIGBUS captured, recovering\n";
+            "\n[LGTBot] FATAL: lgtbot SIGSEGV/SIGBUS captured, dumping stack and recovering\n";
         ssize_t r = write(STDERR_FILENO, banner, sizeof(banner) - 1);
         (void)r;
+
+        // 在 longjmp 之前把栈和上下文落盘 —— 即便后续 backtrace 自己再次出错
+        // (nested SEGV) 也会被 handler 二次进入时 t_sigsegv_armed==0 分支
+        // 走 SIG_DFL 终结,跟改造前等价,不比 baseline 更差。
+        DumpCrashToFile(sig, info);
+
         siglongjmp(t_sigsegv_jmpbuf, sig);
     }
     // 不在保护区(进程启动 / 其他 .so 出问题等):降回默认动作,杀进程
@@ -103,11 +249,45 @@ void SigSegvHandler(int sig, siginfo_t* /*info*/, void* /*ucontext*/)
     raise(sig);
 }
 
+// 从 game_path 推导 plugin 目录,再拼出 crash dump 目录。
+// game_path 形如 ".../plugins/LGTBot_ElainaBot/build/plugins" —— 去掉
+// "/build/plugins" 后缀就是 plugin 根目录。失败时 g_crash_dump_dir 保持空,
+// handler 里的 dump 会自动跳过。
+inline void DeriveCrashDumpDir(const char* game_path) {
+    if (!game_path) return;
+    const char marker[] = "/build/plugins";
+    const char* found = std::strstr(game_path, marker);
+    if (!found) return;
+    size_t base_len = static_cast<size_t>(found - game_path);
+    const char suffix[] = "/LGTBot_CRASH_DUMPS";
+    if (base_len + sizeof(suffix) > sizeof(g_crash_dump_dir)) return;
+    std::memcpy(g_crash_dump_dir, game_path, base_len);
+    std::memcpy(g_crash_dump_dir + base_len, suffix, sizeof(suffix));  // 含 '\0'
+}
+
 // 安装 SIGSEGV / SIGBUS handler。幂等 —— 由 Start 调用一次即可。
-void InstallSigSegvHandler() {
+// `game_path` 用于推导 crash dump 目录;nullptr 时跳过 dump 但 handler 仍装。
+void InstallSigSegvHandler(const char* game_path) {
     static bool installed = false;
     if (installed) return;
     installed = true;
+
+    // ① 预热 backtrace —— 强制现在 dlopen libgcc_s.so,handler 里首次调
+    //    backtrace() 才不会触发 dlopen 死锁(POSIX 没明示 backtrace 是
+    //    async-signal-safe,主要风险点就是 lazy load)。
+    void* prewarm[2];
+    (void)backtrace(prewarm, 2);
+
+    // ② 推导 + 创建 crash dump 目录。失败不致命 —— g_crash_dump_dir 留空,
+    //    handler 里的 DumpCrashToFile 自检后跳过。
+    DeriveCrashDumpDir(game_path);
+    if (g_crash_dump_dir[0]) {
+        (void)mkdir(g_crash_dump_dir, 0755);
+        // 给 stderr 留一句开机日志方便排查
+        std::cerr << "[LGTBot] crash dumps will land at: " << g_crash_dump_dir << std::endl;
+    }
+
+    // ③ 装信号处理器
     struct sigaction sa;
     std::memset(&sa, 0, sizeof(sa));
     sa.sa_sigaction = SigSegvHandler;
@@ -465,7 +645,8 @@ bool Start(
     // 安装 SIGSEGV/SIGBUS 处理器(幂等)。放在 LGTBot_Create 之前,这样即便
     // 引擎自身初始化阶段段错误也能被捕获 —— 不过此时 wrapper 没 arm,会走
     // SIG_DFL 默认动作,跟改造前等价(进程退出)。
-    InstallSigSegvHandler();
+    // 透传 game_path 用于推导 crash dump 目录 (<plugin_dir>/LGTBot_CRASH_DUMPS)。
+    InstallSigSegvHandler(game_path);
 
     ReleaseGIL r;
     const LGTBot_Option option {

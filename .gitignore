@@ -35,3 +35,6 @@ Thumbs.db
 *.tmp
 core
 core.*
+
+# LGTBot SIGSEGV handler crash dumps (LGTBot_ElainaBot.cc::DumpCrashToFile)
+LGTBot_CRASH_DUMPS/
