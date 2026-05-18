@@ -5,12 +5,19 @@
 入口函数（同步）：
   · cb_get_user_name(uid)            返回昵称
   · cb_get_user_avatar_url(uid)      返回头像 URL
-  · cb_send_text_message(...)        发文本（带配额管理）
-  · cb_send_image_message(...)       发图（带配额管理 + 图文同条）
+  · cb_send_text_message(...)        投递文本发送任务（fire-and-forget,瞬时返回）
+  · cb_send_image_message(...)       投递图片发送任务（fire-and-forget,瞬时返回）
 
-异步发送核心：
+发送流程（跑在 asyncio loop,per-target Lock 串行）：
+  · _serialized_text_send            Lock → _send_text_quota_managed → 消费教学标记
+  · _serialized_image_send           Lock → _send_image_quota_managed → 消费教学标记
   · _send_text_quota_managed         配额管理 + 自动追加刷新按钮
   · _send_image_quota_managed        配额管理 + 上传 + media 字段（支持 event_id）
+
+设计要点：cb_send_text/image_message 不再阻塞 C++ 调用线程 —— lgtbot 的 read
+thread 在 OnPost 里只持 Match.mutex_ 几十 µs。修复了等刷新按钮 15s 期间 read
+thread 持锁 → 玩家新指令排队 → 释放锁后紧接着 OnGameOver 把 child_in_ 置 NULL
+→ 排队那条 SendExecute → WriteFrame(NULL) → SIGSEGV 的链式 race。
 """
 
 from __future__ import annotations
@@ -37,9 +44,9 @@ _CRASH_APOLOGY_MD = (
     '## 💥 游戏模块发生致命错误\n'
     '\n'
     'LGT-Bot 引擎发生未预料的崩溃，**当前游戏已无法继续进行**。\n'
-    '进程将在 **30 秒**后自动重启，所有进行中对局会丢失。\n'
+    '进程将在 **30 秒**后自动重启，所有进行中的对局会丢失。\n'
     '\n'
-    '崩溃报告已自动转发至官方交流群，非常抱歉给您带来不便，我们会尽快修复 🌹'
+    '崩溃报告已自动转发至官方群，非常抱歉给您带来不便，我们会尽快修复 🌹'
 )
 # 严重问题通知群 openid —— 由 config.py::_apply_runtime_tunables 按 yaml 配置覆盖。
 # 空字符串 = 不推送。设了的话,引擎崩溃时除了给玩家发道歉,还向此群主动推送
@@ -65,7 +72,9 @@ def cb_lgtbot_crashed(uid: str, gid: str, is_uid: bool, msg: str, sig: int) -> N
     _crash_handled = True
 
     sig_name = _SIG_NAMES.get(sig, f'sig{sig}')
-    target = (f'用户 {uid}' if is_uid else f'群 {gid} 用户 {uid}')
+    # 单行 target,仅供本地日志可读;通知群侧由 _try_send_crash_notification 用
+    # uid/gid/is_uid 自行排版成多行,见下面的安全说明。
+    target = (f'用户 {uid}' if is_uid else f'群聊 {gid} 用户 {uid}')
     preview = (msg or '')[:80].replace('\n', ' ')
 
     # 关键 ERROR 日志 —— 主框架 WebUI 消息日志 / 全局日志都能看到
@@ -95,15 +104,20 @@ def cb_lgtbot_crashed(uid: str, gid: str, is_uid: bool, msg: str, sig: int) -> N
             log.error(f'os.execv 失败，需 supervisor 兜底: {e}')
         return
     try:
+        # preview(用户原文)只用于本地 log.error,**不**透传到通知群发送路径——
+        # 避免用户故意发违规/敏感内容触发崩溃,bot 用自己的 appid 把原文转发到
+        # 管理员群导致 QQ 风控扣分甚至封号。这里只把消息长度往下传(数字,安全);
+        # admin 凭 target + 时间戳去服务端日志反查 preview 原文即可。
+        msg_len = len(preview)
         asyncio.run_coroutine_threadsafe(
-            _handle_crash_aftermath(uid, gid, is_uid, sig_name, target, preview), loop)
+            _handle_crash_aftermath(uid, gid, is_uid, sig_name, msg_len), loop)
     except Exception as e:
         log.error(f'调度崩溃善后失败，直接 os.execv: {e}')
         os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
 async def _handle_crash_aftermath(uid: str, gid: str, is_uid: bool,
-                                  sig_name: str, target: str, preview: str) -> None:
+                                  sig_name: str, msg_len: int) -> None:
     """asyncio 上跑:发道歉给玩家 + 发崩溃报告给通知群 + 倒计时 + execv。
 
     三步并行:
@@ -113,6 +127,10 @@ async def _handle_crash_aftermath(uid: str, gid: str, is_uid: bool,
 
     用 ``asyncio.create_task`` 把前两步丢出去后立刻进 sleep,避免发送阻塞
     (quota 满时 ``_send_text_quota_managed`` 可能等 ≤15s)拖慢重启。
+
+    ``msg_len`` 是触发崩溃的用户消息长度(数字),不含用户原文 —— 见
+    cb_lgtbot_crashed 处的安全说明;``_try_send_crash_notification`` 自己用
+    ``uid`` / ``gid`` / ``is_uid`` 排版成多行 target 块。
     """
     target_id = uid if is_uid else gid
     if target_id:
@@ -121,7 +139,7 @@ async def _handle_crash_aftermath(uid: str, gid: str, is_uid: bool,
     notify_group = CRASH_NOTIFY_GROUP
     if notify_group:
         asyncio.create_task(_try_send_crash_notification(
-            notify_group, sig_name, target, preview))
+            notify_group, sig_name, uid, gid, is_uid, msg_len))
 
     await asyncio.sleep(_LGTBOT_CRASH_DELAY_S)
     log.error(f'🔁 {_LGTBOT_CRASH_DELAY_S:.0f}s 倒计时结束，执行 os.execv 自启 (因 {sig_name})')
@@ -145,32 +163,50 @@ async def _try_send_crash_apology(target_id: str, is_uid: bool) -> None:
 
 
 async def _try_send_crash_notification(notify_group: str, sig_name: str,
-                                       target: str, preview: str) -> None:
+                                       uid: str, gid: str, is_uid: bool,
+                                       msg_len: int) -> None:
     """向严重问题通知群推送一条**主动消息**汇报崩溃。
 
     用 ``sender.send_to_group(group_id, content)`` 不带 ``msg_id``/``event_id``
     走 push API —— 仅在通知群 QQ 后台给本 bot 开了「全量推送」权限时能落地。
     没权限就会被 QQ 拒,这里只打 warning 不报错,30s 后 execv 照常进行。
+
+    **安全约束:** 本消息走 bot 自己的 appid 发出,QQ 风控同样适用 —— 因此
+    **不把触发崩溃的用户原文(preview)拼进 markdown**,避免用户故意发违规/
+    敏感内容借崩溃路径让 bot 转发,触发风控扣分甚至封号。只展示机械生成、
+    bot 完全可控的字段(信号名 / openid / 长度数字),全部塞进单个代码块里,
+    QQ markdown 不会把里面的内容当指令解析。完整 preview 在服务端
+    ``log.error`` 里,管理员凭 target + 时间戳去 WebUI「消息日志」或
+    framework 全局日志反查即可,本地查完全无风险。
     """
     sender = helpers.get_sender('')
     if sender is None:
         log.warning('无可用 sender，跳过崩溃通知群推送')
         return
 
+    # 触发源块:私聊单行,群聊两行(群号 + 用户号各占一行,提升可读性)
+    if is_uid:
+        target_block = f'用户 {uid}'
+    else:
+        target_block = f'群聊 {gid}\n用户 {uid}'
+
     md = (
         '$$\\textcolor{red}{\\Huge\\text{错误推送}}$$'
         '\n'
         '## 💥 LGT-Bot 引擎崩溃\n'
         '\n'
-        '> 引擎发生致命错误导致程序崩溃，所有进行中对局丢失\n'
+        '> 引擎发生致命错误导致程序崩溃，所有进行中的对局丢失\n'
         '\n'
-        f'- **信号**: `{sig_name}`\n'
-        f'- **触发源**: {target}\n'
-        f'- **消息预览**: `{preview}`\n'
+        '```崩溃信息\n'
+        f'- 信号: {sig_name}\n'
+        '- 触发源:\n'
+        f'{target_block}\n'
+        f'- 消息长度: {msg_len} 字符（详见服务端日志）\n'
+        '```\n'
         '\n'
         f'进程将在 **{_LGTBOT_CRASH_DELAY_S:.0f} 秒**后自动重启···\n'
-        f'\n'
-        f'> 💡 此消息为自动推送，请尽快联系开发者排查修复'
+        '\n'
+        '> 💡 此消息为自动推送，请尽快联系开发者排查修复'
     )
     message_log.log_outgoing(notify_group, False, md)
     try:
@@ -184,13 +220,34 @@ async def _try_send_crash_notification(notify_group: str, sig_name: str,
 # 触发流:LGTBot_ElainaBot.cc::ClassifyMatchEvent 识别引擎「游戏开始,您可以使用」
 # 广播 → 调 cb_match_event(kind='game_started') → 此处把 key 记入
 # _pending_tip_keys。**真正的发送时机被推迟到本帧的 cb_send_text_message /
-# cb_send_image_message 把引擎那条开局公告同步落地之后**:
+# cb_send_image_message 把引擎那条开局公告排进 asyncio 发送队列之后**:
 #   1. C++ 调 cb_match_event(只标记,不立刻发) → 立即返回
-#   2. C++ 调 cb_send_text_message → 内部 run_coro_blocking 同步等开局公告送达
-#   3. 等待返回后我们才 `_schedule_refresh_tip` —— 这就保证 QQ 端先看到「游戏
-#      开始」,再看到「刷新按钮使用说明」,不会因为 asyncio FIFO 调度导致教学
-#      提示抢在开局公告前面送达。
+#   2. C++ 调 cb_send_text_message → 投递「开局公告」send task 到 asyncio + per-key
+#      Lock 排队(见下面 _send_locks);Lock 保证 QQ 端按 cb 调用顺序送达
+#   3. 开局公告 send task 跑完后,我们才在同一个 task 末尾调 _consume_pending_tip
+#      → 调度教学提示 task,后者再次抢同一把 Lock 排到开局公告后面 → 顺序得证。
 _pending_tip_keys: set[str] = set()
+
+# ──────── per-target 串行化:发到同一 target 的消息按 cb 调用顺序送达 QQ ────────
+# 引入背景:旧实现 cb_send_text_message 走 helpers.run_coro_blocking 同步等 15s
+# (内部 wait_and_consume 等用户点刷新),期间 lgtbot 的 read thread 持有 Match.mutex_,
+# 这窗口足以让玩家发出新指令进 Match::Request 排队 → 15s 后释放锁 → 紧接着
+# OnGameOver 抢锁置 state=IS_OVER + CloseInput() 把 child_in_ 置 NULL → 排队那条
+# SendExecute → WriteFrame(NULL) → SIGSEGV。
+#
+# 新实现 cb_send_text/image_message 改 fire-and-forget:投递到 asyncio loop 立即
+# 返回,read thread 在 OnPost 里持锁只剩几十 µs。 per-target asyncio.Lock 保证发到
+# 同一 target 的消息按 cb 调用顺序送达 QQ(asyncio FIFO + Lock 串行)。
+_send_locks: dict[str, asyncio.Lock] = {}
+
+
+def _get_send_lock(key: str) -> asyncio.Lock:
+    """懒创建 per-target Lock。只能从 asyncio loop 调(单线程,dict get/setdefault 安全)。"""
+    lock = _send_locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _send_locks[key] = lock
+    return lock
 
 _REFRESH_TIP_BASE = (
     '## ⚠️ 消息回复限制\n'
@@ -214,6 +271,9 @@ async def _send_refresh_tip(target_id: str, is_uid: bool) -> None:
     第 4 / 5 条配额上的真正刷新按钮由 ``_send_text_quota_managed`` 按 count
     自动挂载;教学消息本身视场景另带「全量申请」按钮。
 
+    走 per-target Lock 排队 —— 跟 ``_serialized_text_send`` 共用同一把锁,保证
+    教学提示永远在「开局公告」之后到达 QQ。
+
     分支:
       · 私信(``is_uid=True``):仅 BASE 段,无附加按钮 —— 私聊没有「群号」
         概念,「全量申请」段会显得突兀。
@@ -227,9 +287,11 @@ async def _send_refresh_tip(target_id: str, is_uid: bool) -> None:
     else:
         msg = _REFRESH_TIP_BASE + _REFRESH_TIP_GROUP_TAIL
         extra = buttons.build_full_volume_apply_button()
+    key = helpers.target_key(target_id, is_uid)
     try:
-        message_log.log_outgoing(target_id, is_uid, msg)
-        await _send_text_quota_managed(target_id, is_uid, msg, extra)
+        async with _get_send_lock(key):
+            message_log.log_outgoing(target_id, is_uid, msg)
+            await _send_text_quota_managed(target_id, is_uid, msg, extra)
     except Exception as e:
         log.debug(f'消息回复限制说明发送失败 ({target_id}): {e}')
 
@@ -254,8 +316,11 @@ def _schedule_refresh_tip(target_id: str, is_uid: bool) -> None:
 def _consume_pending_tip(key: str, target_id: str, is_uid: bool) -> None:
     """若本 key 之前在 cb_match_event 里被打了 game_started 标记,这里弹掉并发出。
 
-    由两个发送回调(text / image)在 `run_coro_blocking` 同步返回后调用 ——
-    那一刻引擎的开局公告已经送达 QQ,我们才能把教学提示安全地排在它后面。
+    由 ``_serialized_text_send`` / ``_serialized_image_send`` 在 per-target Lock
+    持有期间、``_send_text/image_quota_managed`` 已 await 完毕之后调用。
+    教学提示走 ``_schedule_refresh_tip`` 投到 asyncio loop,内部再次抢同一把
+    Lock —— 当前 send task 释放锁后,教学提示 task 自然排到下一位,QQ 端先
+    看到「游戏开始」再看到「消息回复限制」教学。
 
     全量群里 bot 不被 5 条/msg_id 限制,refresh 按钮永远不会出现 —— 这条
     教学的整段文案(在讲怎么点刷新按钮)会变成误导。所以只清掉标记,不发送。
@@ -375,24 +440,51 @@ def cb_get_user_avatar_url(uid: str) -> str:
 # ──────── 文本发送 ────────────────────────────────────────────────────────
 
 def cb_send_text_message(target_id: str, is_uid: bool, msg: str):
-    """C++ → Python：发送文本消息（带配额管理 + 按钮接力续命）
+    """C++ → Python：发送文本消息（fire-and-forget,不阻塞 C++ 调用线程）
+
+    旧实现走 ``helpers.run_coro_blocking`` 阻塞 C++ 线程至多 15s 等刷新按钮 ——
+    那段时间内 lgtbot read thread 在 OnPost 里持有 ``Match.mutex_``,后续玩家
+    指令在 Thread B 排队;15s 后释放,Thread B 几乎同时和 OnGameOver 抢锁 →
+    Thread B 拿到锁后看 state 仍是 IS_STARTED → 解锁 → OnGameOver 紧接着拿锁
+    置 IS_OVER + CloseInput → child_in_=NULL → Thread B 的 SendExecute →
+    WriteFrame(NULL) → SIGSEGV。
+
+    新实现:投递发送任务到 asyncio loop 立即返回,read thread 持锁时间从 ≤15s
+    压到几十 µs。per-target Lock 保证发到同一 target 的消息按 cb 调用顺序
+    送达 QQ。
 
     本条回复要附的按钮（若有）已由 bridge 先调用 cb_match_event 写进
     state.pending_buttons[key]——同一次 HandleMessages 内顺序调用,
-    GIL 保护下读写安全。
+    GIL 保护下读写安全。这里 pop 出来跟着 send task 走。
     """
     key = helpers.target_key(target_id, is_uid)
     extra_buttons = state.pending_buttons.pop(key, None)
     message_log.log_outgoing(target_id, is_uid, msg)
 
-    async def _do():
+    loop = state.event_loop
+    if loop is None or loop.is_closed():
+        log.warning('事件循环不可用，丢弃文本消息')
+        return
+    try:
+        asyncio.run_coroutine_threadsafe(
+            _serialized_text_send(key, target_id, is_uid, msg, extra_buttons),
+            loop)
+    except Exception as e:
+        log.warning(f'调度文本发送失败: {e}')
+
+
+async def _serialized_text_send(key: str, target_id: str, is_uid: bool,
+                                msg: str, extra_buttons) -> None:
+    """串行化的文本发送:per-target Lock 保证顺序,配额管理 + auto-refresh 按钮挂载。
+
+    Lock 内顺序:
+      ① ``_send_text_quota_managed``  实际把这条文本送出去
+      ② ``_consume_pending_tip``      如本帧标了 game_started,调度教学提示 task
+                                      —— 它也走同一把 Lock,会自动排在本条之后。
+    """
+    async with _get_send_lock(key):
         await _send_text_quota_managed(target_id, is_uid, msg, extra_buttons)
-
-    helpers.run_coro_blocking(_do())
-
-    # 引擎这条已落地(run_coro_blocking 同步等了它),如果本帧 cb_match_event
-    # 之前标了 game_started,这里把「刷新按钮使用说明」紧跟着排出去。
-    _consume_pending_tip(key, target_id, is_uid)
+        _consume_pending_tip(key, target_id, is_uid)
 
 
 async def _send_text_quota_managed(target_id, is_uid, msg, extra_buttons):
@@ -468,10 +560,11 @@ async def _send_text_quota_managed(target_id, is_uid, msg, extra_buttons):
 # ──────── 图片发送 ────────────────────────────────────────────────────────
 
 def cb_send_image_message(target_id: str, is_uid: bool, image_path: str, content: str = ''):
-    """C++ → Python：发送图片（可附带 content，合并为单条媒体消息）
+    """C++ → Python：发送图片（fire-and-forget,理由同 ``cb_send_text_message``）
 
     LGTBot 通过 popen 异步调用 markdown2image 生成图片，存在小概率回调到达
-    时文件还未落盘，这里短暂轮询等待最多 2s。
+    时文件还未落盘，这里短暂轮询等待最多 2s。文件读完后投到 asyncio loop 串行
+    发送,本函数立即返回让 C++ read thread 释放 Match.mutex_。
     """
     if not os.path.isfile(image_path):
         deadline = time.time() + 2.0
@@ -500,18 +593,33 @@ def cb_send_image_message(target_id: str, is_uid: bool, image_path: str, content
     )
 
     filename = os.path.basename(image_path) or 'lgtbot.png'
+    key = helpers.target_key(target_id, is_uid)
 
-    async def _do():
+    loop = state.event_loop
+    if loop is None or loop.is_closed():
+        log.warning('事件循环不可用，丢弃图片消息')
+        return
+    try:
+        asyncio.run_coroutine_threadsafe(
+            _serialized_image_send(key, target_id, is_uid, data, raw_content, filename),
+            loop)
+    except Exception as e:
+        log.warning(f'调度图片发送失败: {e}')
+
+
+async def _serialized_image_send(key: str, target_id: str, is_uid: bool,
+                                 data: bytes, raw_content: str, filename: str) -> None:
+    """串行化的图片发送 —— 与 ``_serialized_text_send`` 共享 per-target Lock。
+
+    多图场景:lgtbot 把每张图一条 cb_send_image_message 投过来,第 1 张带
+    ``raw_content`` (合并后的 caption),其余 raw_content 为空。``game_started``
+    教学标记只在「胜利!」之类文本里出现,因此只有 raw_content 非空时才尝试
+    ``_consume_pending_tip``;空 raw_content 看不到 key 也是 no-op。
+    """
+    async with _get_send_lock(key):
         await _send_image_quota_managed(target_id, is_uid, data, raw_content, filename)
-
-    helpers.run_coro_blocking(_do())
-
-    # 多图情况下,game_started 的「游戏开始」字符串只会出现在合并后的 caption
-    # (第 1 张图带 content),所以只有 raw_content 非空时才有可能命中标记;
-    # 第 2 张以后 raw_content 为空,_consume_pending_tip 看不到 key 也是 no-op。
-    if raw_content:
-        _consume_pending_tip(
-            helpers.target_key(target_id, is_uid), target_id, is_uid)
+        if raw_content:
+            _consume_pending_tip(key, target_id, is_uid)
 
 
 async def _send_image_quota_managed(target_id, is_uid, data, raw_content, filename):
