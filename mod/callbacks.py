@@ -514,12 +514,11 @@ async def _send_text_quota_managed(target_id, is_uid, msg, extra_buttons):
             log.info(f'⚡ [全量直推] {key} 配额已满，走主动消息: {msg_preview!r}')
         else:
             # 非全量群:配额满 → 阻塞等待，不预先尝试发送（直接发也会被 QQ 拒）
-            import time as _t
-            wait_start = _t.monotonic()
+            wait_start = time.monotonic()
             log.info(f'⏳ [配额已满] {key} 已用 {quota.REF_QUOTA}/{quota.REF_QUOTA}，'
                      f'阻塞等待刷新按钮 ≤{quota.REFRESH_WAIT_TIMEOUT:.0f}s | 待发: {msg_preview!r}')
             consumed = await quota.wait_and_consume(key, quota.REFRESH_WAIT_TIMEOUT)
-            elapsed = _t.monotonic() - wait_start
+            elapsed = time.monotonic() - wait_start
             if consumed is None:
                 # 等待超时 → 改走主动消息(无 msg_id/event_id)。
                 # bot 若在该群/用户上有主动 quota 还能落地,语义更干净。
@@ -647,12 +646,11 @@ async def _send_image_quota_managed(target_id, is_uid, data, raw_content, filena
         if is_full:
             log.info(f'⚡ [全量直推] {key} 配额已满，图片走主动消息')
         else:
-            import time as _t
-            wait_start = _t.monotonic()
+            wait_start = time.monotonic()
             log.info(f'⏳ [配额已满] {key} 已用 {quota.REF_QUOTA}/{quota.REF_QUOTA}，'
                      f'阻塞等待刷新按钮 ≤{quota.REFRESH_WAIT_TIMEOUT:.0f}s | 待发: [图片]')
             consumed = await quota.wait_and_consume(key, quota.REFRESH_WAIT_TIMEOUT)
-            elapsed = _t.monotonic() - wait_start
+            elapsed = time.monotonic() - wait_start
             if consumed is None:
                 # 等待超时 → 改走主动消息(理由同 _send_text_quota_managed:
                 # 过期 msg_id 强发必拒,主动消息至少留一条出路)。

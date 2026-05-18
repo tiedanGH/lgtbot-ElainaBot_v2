@@ -59,13 +59,13 @@ survive hot-reload with active games and improve quota logic
 | 入口 `main.py`                                                  | **无前缀**                | `add @on_unload guard for active games`          |
 | 顶层文档（`README` / `DEPLOY` / `CLAUDE`）单独改动                      | **无前缀**                | `update README to reflect data/engine subfolder` |
 | 顶层构建文件（`LGTBot_ElainaBot.cc` / `build.sh` / `CMakeLists.txt`） | **无前缀**                | `disable AddressSanitizer in build script`       |
-| `app/` 下任一子模块                                                 | **模块文件名（不带路径、不带 .py）** | `quota: fix race in shared Event`                |
+| `mod/` 下任一子模块                                                 | **模块文件名（不带路径、不带 .py）** | `quota: fix race in shared Event`                |
 | 子模块 + 同步更新 README / DEPLOY                                    | **跟主代码变化的 prefix**     | `uploader: extend dispatch to all backends`      |
-| 多个 app/ 子模块都有 *功能性* 变化                                        | **无前缀**，按最高层职责描述       | `survive hot-reload with active games`           |
+| 多个 mod/ 子模块都有 *功能性* 变化                                        | **无前缀**，按最高层职责描述       | `survive hot-reload with active games`           |
 
-**关键约束 ①：前缀只用文件名，不带路径。** 路径会随重构变化（今天 `app/quota.py` 明天可能变 `app/runtime/quota.py`），但模块名相对稳定。
+**关键约束 ①：前缀只用文件名，不带路径。** 路径会随重构变化（今天 `mod/quota.py` 明天可能变 `mod/runtime/quota.py`），但模块名相对稳定。
 
-**关键约束 ②：README / DEPLOY 同步不算"混合改动"。** 它们是 §4 同步规则强制要求的副作用，prefix 跟主代码变化的位置走。只有多个 `app/` 子模块都有**功能性**变化时才用"无前缀"。
+**关键约束 ②：README / DEPLOY 同步不算"混合改动"。** 它们是 §4 同步规则强制要求的副作用，prefix 跟主代码变化的位置走。只有多个 `mod/` 子模块都有**功能性**变化时才用"无前缀"。
 
 ✅ 好：
 ```
@@ -78,8 +78,8 @@ move lgtbot.json into data/engine/ subfolder
 ❌ 差：
 ```
 fix: Preload shared libs                       # 动作前缀 + 大写
-app/quota: fix race                            # 不要带路径
-plugins/LGTBot_ElainaBot/app/quota.py: ...            # 更不要带完整路径
+mod/quota: fix race                            # 不要带路径
+plugins/LGTBot_ElainaBot/mod/quota.py: ...            # 更不要带完整路径
 修复 lgtbot.json 位置                            # 中文
 ```
 
@@ -98,27 +98,25 @@ plugins/LGTBot_ElainaBot/app/quota.py: ...            # 更不要带完整路径
 保持精简，**只负责四件事**：
 1. 声明 `__plugin_meta__`
 2. 在 module top-level 捕获 `_ctx_mod.ctx` → `state.plugin_ctx`
-3. 顺序触发 `app/` 子模块加载（`boot` 必须最先）
+3. 顺序触发 `mod/` 子模块加载（`boot` 必须最先）
 4. 实现 `@on_load` / `@on_unload` 生命周期
 
-入口文件超过 ~150 行就该考虑把逻辑下沉到 `app/`。
+入口文件超过 ~150 行就该考虑把逻辑下沉到 `mod/`。
 
-### 子模块 `app/`
-
-| 模块           | 职责                                                         |
-|--------------|------------------------------------------------------------|
-| `state`      | 共享可变全局状态容器（`pending_buttons` / `event_loop` / `started` 等） |
-| `boot`       | C++ 扩展加载（顺序敏感：`chdir` + `RTLD_GLOBAL` + `ctypes.CDLL` 预加载） |
-| `buttons`    | 按钮模板 + 命令触发正则                                              |
-| `helpers`    | 通用工具（sender / coro / mention / target_key）                 |
-| `quota`      | 被动消息引用配额管理                                                 |
-| `callbacks`  | C++ 引擎回调实现（`cb_*` 入口 + 异步发送）                               |
-| `dispatcher` | `@handler` 注册（消息派发 + INTERACTION）                          |
-| `config`     | `data/config.yaml` 读写                                      |
-| `userdb`     | 用户昵称 / 头像 SQLite 持久化（pending dict + 5 min 批量 flush）        |
-| `uploader`   | 图床上传调度 + 图片尺寸解析                                            |
+| 模块                | 职责                                                                               |
+|-------------------|----------------------------------------------------------------------------------|
+| `state`           | 共享可变全局状态容器（`pending_buttons` / `event_loop` / `started` 等）                       |
+| `boot`            | C++ 扩展加载（顺序敏感：`chdir` + `RTLD_GLOBAL` + `ctypes.CDLL` 预加载）                       |
+| `buttons`         | 按钮模板 + 命令触发正则                                                                    |
+| `helpers`         | 通用工具（sender / coro / mention / target_key）                                       |
+| `quota`           | 被动消息引用配额管理                                                                       |
+| `callbacks`       | C++ 引擎回调实现（`cb_*` 入口 + 异步发送）                                                     |
+| `dispatcher`      | `@handler` 注册（消息派发 + INTERACTION）                                                |
+| `config`          | `data/config.yaml` 读写                                                            |
+| `userdb`          | 用户昵称 / 头像 SQLite 持久化（pending dict + 5 min 批量 flush）                              |
+| `uploader`        | 图床上传调度 + 图片尺寸解析                                                                  |
 | `log_attribution` | 类级 monkey-patch `MessageSender._log_push`,让本插件的 push 在主框架 Web 面板归类为「LGTBot 消息派发」 |
-| `webui/`     | Web 面板侧边栏页面                                                |
+| `webui/`          | Web 面板侧边栏页面                                                                      |
 
 新增功能时优先选最契合的现有模块，**只有职责明显独立时才新建文件**。
 
@@ -161,7 +159,7 @@ plugins/LGTBot_ElainaBot/app/quota.py: ...            # 更不要带完整路径
 
 PluginManager 文件保存触发热重载时：
 - C++ 扩展 `LGTBot_ElainaBot` 常驻进程，`sys.modules['LGTBot_ElainaBot']` 跨重载保留
-- Python 子模块（`plugins.LGTBot_ElainaBot.app.*`）会被销毁重建
+- Python 子模块（`plugins.LGTBot_ElainaBot.mod.*`）会被销毁重建
 - 要跨重载共享的可变状态都挂在 C++ 扩展属性上（`boot._get_persistent()`）
 - 检测到引擎已运行 + 有进行中的游戏时，**不要再调 `LGTBot_ElainaBot.start()`**（会覆盖 `g_bot_core`，所有活跃 match 失联）
 

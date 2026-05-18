@@ -79,15 +79,11 @@ def refresh_ref(key: str, ref_type: str, ref_value: str, appid: str = ''):
             pass
 
 
-def try_consume_ref(key: str, *, ignore_quota: bool = False):
+def try_consume_ref(key: str):
     """尝试取一次配额。
 
-    成功返回 (ref_type, ref_value, count_after, appid)；
-    失败（无引用 / 已过期，或未指定 ignore_quota 时配额满）返回 None。
-
-    ignore_quota=True 仅用于等待超时后的最后一搏尝试发送 —— count 仍会自增
-    （便于日志追踪"已用 N/5"，N 可能 > 5），QQ 端会按 msg_seq 配额规则拒绝，
-    此为预期行为。
+    成功返回 ``(ref_type, ref_value, count_after, appid)``;
+    失败(无引用 / 已过期 / 配额已满)返回 ``None``。
     """
     with _ref_lock:
         ref = _active_ref.get(key)
@@ -96,7 +92,7 @@ def try_consume_ref(key: str, *, ignore_quota: bool = False):
         if time.time() > ref['expires_at']:
             _active_ref.pop(key, None)
             return None
-        if not ignore_quota and ref['count'] >= REF_QUOTA:
+        if ref['count'] >= REF_QUOTA:
             return None
         ref['count'] += 1
         return (ref['ref_type'], ref['ref_value'], ref['count'], ref.get('appid', ''))

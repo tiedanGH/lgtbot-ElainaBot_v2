@@ -72,7 +72,7 @@ private:
 //      Python 侧。
 //   3. 回到 wrapper 后,GIL 状态不确定(`ReleaseGIL` 的 dtor 被 longjmp 跳过没跑,
 //      GIL 仍处于释放态),用 `PyGILState_Ensure` 重新拿;然后调 Python 模块
-//      ``plugins.LGTBot_ElainaBot.app.callbacks.cb_lgtbot_crashed`` 通知崩溃,
+//      ``plugins.LGTBot_ElainaBot.mod.callbacks.cb_lgtbot_crashed`` 通知崩溃,
 //      Python 侧负责 WebUI 日志 / 发道歉 / 30s 后 os.execv 重启。
 //   4. `thread_local sigjmp_buf` 让多线程并发的引擎调用各自独立恢复 —— 信号
 //      处理器在出错线程上运行,读到的 TLS 就是该线程的,不会互相干扰。
@@ -313,7 +313,7 @@ void NotifyCrashToPython(int sig) {
     PyGILState_Ensure();
     try {
         namespace py = boost::python;
-        py::object mod = py::import("plugins.LGTBot_ElainaBot.app.callbacks");
+        py::object mod = py::import("plugins.LGTBot_ElainaBot.mod.callbacks");
         mod.attr("cb_lgtbot_crashed")(
             std::string(t_crash_uid),
             std::string(t_crash_gid),

@@ -24,7 +24,7 @@ from core.base.logger import get_logger, PLUGIN
 log = get_logger(PLUGIN, 'LGTBot')
 
 # ──────── 路径常量 ────────────────────────────────────────────────────────
-# __file__ → plugins/LGTBot_ElainaBot/app/boot.py  → 插件根目录是其上一级的上一级
+# __file__ → plugins/LGTBot_ElainaBot/mod/boot.py  → 插件根目录是其上一级的上一级
 PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BUILD_DIR  = os.path.join(PLUGIN_DIR, 'build')
 DATA_DIR   = os.path.join(PLUGIN_DIR, 'data')
@@ -131,9 +131,14 @@ if _chdir_ok:
 # 重新 import；但 C++ 扩展 `LGTBot_ElainaBot` 一旦被 dlopen 就常驻进程内，sys.modules
 # 也保留缓存。利用这一点，把所有需要跨重载共享的可变容器挂到扩展模块对象上：
 #
-#   pending_buttons  - 命令触发的待附按钮（一次性消费）
-#   active_ref       - 被动消息配额状态（msg_id/event_id + count）
-#   ref_waiters      - 配额满时等待的 asyncio.Event 列表
+#   pending_buttons  - 命令触发的待附按钮（一次性消费, 见 callbacks.cb_match_event）
+#   active_ref       - 被动消息配额状态（msg_id/event_id + count, 见 quota.py）
+#   ref_waiters      - 配额满时等待的 asyncio.Event 列表（同上）
+#   current_game     - 群/用户 → 当前游戏名（/规则 按钮回查用，见 state.py）
+#   full_volume_groups - 已观测到 GROUP_MESSAGE_CREATE 的群 openid 集合
+#                       （helpers.is_full_volume_group 唯一信号源）
+#   log_attribution_ctxvar - log_attribution 模块的 ContextVar 实例
+#                       （跨热重载身份保持,patched _log_push 闭包要捕获同一个对象）
 #
 # 这样旧 callback（持有旧模块引用）和新 dispatcher（新模块引用）操作的都是
 # 同一份字典，热重载后玩家命令仍能正确路由到旧引擎里仍在进行的游戏。
@@ -143,31 +148,45 @@ if _chdir_ok:
 _PERSIST_ATTR = '_elaina_persistent'
 _ENGINE_RUNNING_ATTR = '_elaina_engine_running'
 
+# 持久化字典的所有默认 key 集中在这里 —— state.py / log_attribution.py 不再
+# 各自 setdefault,直接从 _get_persistent() 取就保证 key 一定存在。
+# (log_attribution_ctxvar 是 ContextVar 实例,延迟构造 —— 这里只占位 None,
+#  log_attribution._get_ctxvar() 检测到 None 时再 ContextVar(...) 一次性填上。)
+_PERSIST_DEFAULTS: dict = {
+    'pending_buttons':         {},
+    'active_ref':              {},
+    'ref_waiters':             {},
+    'current_game':            {},
+    'full_volume_groups':      set(),
+    'log_attribution_ctxvar':  None,
+}
+
 
 def _get_persistent() -> dict:
-    """返回挂在 C++ 扩展上的持久化容器，缺失则创建。
+    """返回挂在 C++ 扩展上的持久化容器，缺失则创建并补齐所有默认 key。
 
     第一次插件加载：扩展模块上没有 _elaina_persistent → 创建新 dict
-    后续热重载：直接复用已有的 dict（旧字典里的所有 key/value 仍可访问）
+    后续热重载：直接复用已有的 dict；如果新增了某 key 但旧 dict 没有,在此补齐
+    (容器类型 default 用 dict/set/list 实例,**不要共享**,每次 setdefault 单独
+    构造一个新的;None 默认值天然安全)。
     """
-    default = {
-        'pending_buttons': {},
-        'active_ref': {},
-        'ref_waiters': {},
-    }
     if LGTBot_ElainaBot is None:
         # 扩展未编译：返回一次性的 fallback dict（不会跨重载共享，但避免 None）
-        return default
+        return {k: (type(v)() if isinstance(v, (dict, set, list)) else v)
+                for k, v in _PERSIST_DEFAULTS.items()}
     p = getattr(LGTBot_ElainaBot, _PERSIST_ATTR, None)
     if p is None:
-        p = default
+        p = {}
         try:
             setattr(LGTBot_ElainaBot, _PERSIST_ATTR, p)
         except Exception:
             pass
-    else:
-        # 老版本的内存 user_cache：迁移后已无人读，pop 掉避免长期占内存
-        p.pop('user_cache', None)
+    # 补齐缺失的 key (老版本 dict 没有的字段在新版本里仍可用)
+    for k, v in _PERSIST_DEFAULTS.items():
+        if k not in p:
+            p[k] = type(v)() if isinstance(v, (dict, set, list)) else v
+    # 老版本的内存 user_cache：迁移后已无人读，pop 掉避免长期占内存
+    p.pop('user_cache', None)
     return p
 
 

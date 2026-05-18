@@ -34,20 +34,20 @@ from core.base.logger import get_logger, PLUGIN
 #   3. _ctx_mod.ctx = None         ← reset
 #   4. 调用 @on_load 函数（此时 ctx 已是 None）
 # 所以必须在模块顶层捕获，不能延迟到 @on_load 内
-from plugins.LGTBot_ElainaBot.app import state as _state
+from plugins.LGTBot_ElainaBot.mod import state as _state
 _state.plugin_ctx = _ctx_mod.ctx
 
 # ──────── 触发各子模块加载 ────────────────────────────────────────────────
 # 顺序敏感：boot 必须最先（处理 C++ 扩展导入 + chdir + RTLD_GLOBAL 副作用），
 # 其他模块依赖 boot.LGTBot_ElainaBot / boot.BUILD_DIR / boot.LGTBOT_AVAILABLE 等
-from plugins.LGTBot_ElainaBot.app import boot              # noqa: F401  C++ 引擎与路径
-from plugins.LGTBot_ElainaBot.app import userdb            # noqa: F401  用户昵称 / 头像 SQLite
-from plugins.LGTBot_ElainaBot.app.webui import main as webui  # noqa: F401  Web 面板侧边栏页面入口
-from plugins.LGTBot_ElainaBot.app.webui import message_log # noqa: F401  日志缓冲(callbacks / dispatcher 直接调用)
-from plugins.LGTBot_ElainaBot.app import dispatcher        # noqa: F401  @handler 注册（消息派发 + INTERACTION）
-from plugins.LGTBot_ElainaBot.app import callbacks         # C++ 回调（被 LGTBot_ElainaBot.start 注入）
-from plugins.LGTBot_ElainaBot.app import config as _config
-from plugins.LGTBot_ElainaBot.app import log_attribution as _log_attribution  # noqa: F401
+from plugins.LGTBot_ElainaBot.mod import boot              # noqa: F401  C++ 引擎与路径
+from plugins.LGTBot_ElainaBot.mod import userdb            # noqa: F401  用户昵称 / 头像 SQLite
+from plugins.LGTBot_ElainaBot.mod.webui import main as webui  # noqa: F401  Web 面板侧边栏页面入口
+from plugins.LGTBot_ElainaBot.mod.webui import message_log # noqa: F401  日志缓冲(callbacks / dispatcher 直接调用)
+from plugins.LGTBot_ElainaBot.mod import dispatcher        # noqa: F401  @handler 注册（消息派发 + INTERACTION）
+from plugins.LGTBot_ElainaBot.mod import callbacks         # C++ 回调（被 LGTBot_ElainaBot.start 注入）
+from plugins.LGTBot_ElainaBot.mod import config as _config
+from plugins.LGTBot_ElainaBot.mod import log_attribution as _log_attribution  # noqa: F401
 
 log = get_logger(PLUGIN, 'LGTBot')
 

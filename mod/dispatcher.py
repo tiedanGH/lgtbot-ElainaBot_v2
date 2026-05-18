@@ -28,11 +28,14 @@ from .webui import message_log
 log = get_logger(PLUGIN, 'LGTBot')
 
 # 菜单 logo 文件路径（仓库内置）
-_MENU_LOGO_PATH = os.path.join(boot.PLUGIN_DIR, 'images', 'logo_transparent_colorful.png')
+# 用 ``_images/`` 而非 ``images/``: 加载器(``core/plugin/_loader.py:_import_plugin``)
+# 跳过所有 ``_`` 开头的子目录,不会把它注册成 ``plugins.LGTBot_ElainaBot.images``
+# 的伪 sub-package。纯资源目录这样标记最干净。
+_MENU_LOGO_PATH = os.path.join(boot.PLUGIN_DIR, '_images', 'logo_transparent_colorful.png')
 
 
 async def _resolve_menu_logo() -> dict | None:
-    """读取 images/logo_transparent_colorful.png 并通过图床上传 + 23h 缓存。
+    """读取 _images/logo_transparent_colorful.png 并通过图床上传 + 23h 缓存。
 
     任何异常都吞掉返回 None：菜单 logo 仅是装饰，不应阻断欢迎菜单回复。
     返回的字典含 ``url`` / ``width`` / ``height``，可直接拼 markdown。
@@ -61,7 +64,9 @@ _LGT_MSG_EVENTS = frozenset({
 
 # ──────── 消息派发 ────────────────────────────────────────────────────────
 
-@handler(r'.*', name='LGTBot 消息派发', priority=-100,
+@handler(r'.*', name='LGTBot 消息派发',
+         desc='把群 @bot / 私聊 / 全量群 @bot 消息派发给 LGTBot C++ 引擎',
+         priority=-100,
          event_types=_LGT_MSG_EVENTS, ignore_at_check=True)
 async def lgtbot_dispatch(event, match):
     """将所有群 @ / 私聊消息派发给 LGTBot 引擎（不消费事件，其他插件仍可处理）。
@@ -172,6 +177,7 @@ async def lgtbot_dispatch(event, match):
 
 @handler(rf'^{re.escape(quota.RELAY_BUTTON_DATA)}$',
          name='LGTBot 刷新按钮回调',
+         desc='「🔄 刷新会话」按钮点击 → ack + 用新 event_id 续 5 条被动回复额度',
          priority=-200,
          event_types={INTERACTION_CREATE})
 async def lgtbot_interaction_relay(event, match):
@@ -193,6 +199,7 @@ async def lgtbot_interaction_relay(event, match):
 
 @handler(rf'^(?!{re.escape(quota.RELAY_BUTTON_DATA)}$).+',
          name='LGTBot 按钮回调派发',
+         desc='非刷新 callback 按钮的 data 当作用户消息派发给 LGTBot 引擎',
          priority=-100,
          event_types={INTERACTION_CREATE})
 async def lgtbot_interaction_dispatch(event, match):
@@ -322,6 +329,7 @@ def schedule_exec_after(delay: float = 0.5, on_failure=None) -> None:
 
 @handler(r'^重启$',
          name='LGTBot 重启',
+         desc='整进程 os.execv 重启,重新加载 C++ 引擎与全部游戏插件',
          owner_only=True,
          event_types=_LGT_MSG_EVENTS,
          priority=100)

@@ -118,7 +118,7 @@ plugins/LGTBot_ElainaBot/
 ├── README.md                本文档
 ├── LICENSE                  LGPLv2 许可证
 │
-├── app/                     插件功能模块
+├── mod/                     插件功能模块（用 `mod/` 而非 `app/` 是为了让 Web 面板「插件管理」不把内部子模块当 toggle 项暴露,误关会崩）
 │   ├── __init__.py
 │   ├── state.py             共享运行时状态容器（含跨重载持久化）
 │   ├── boot.py              C++ 扩展加载（chdir + lib*.so 预加载 + RTLD_GLOBAL）
@@ -142,7 +142,7 @@ plugins/LGTBot_ElainaBot/
 │           ├── logs/        「消息日志」标签 HTML+JS
 │           └── users/       「用户数据」标签 HTML+JS
 │
-├── images/                  仓库内置静态资源
+├── _images/                 仓库内置静态资源
 │   └── logo_transparent_colorful.png   欢迎菜单顶部 logo
 │
 ├── .github/workflows/cmake.yml   GitHub Actions CI（Ubuntu 编译 + ctest）
