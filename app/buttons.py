@@ -103,7 +103,7 @@ def build_full_volume_apply_button() -> list[list[dict]]:
     实际处理「全量申请」命令的是另一个插件,本插件只提供 UI 入口。
     """
     return [[
-        {'text': '全量权限申请', 'data': '全量申请', 'type': 2, 'style': 4},
+        {'text': '全量消息授权', 'data': '全量申请', 'type': 2, 'style': 4},
     ]]
 
 
