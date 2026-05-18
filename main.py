@@ -149,19 +149,19 @@ async def _teardown():
     except Exception:
         pass
 
-    try:
-        if not _state.started or not boot.LGTBOT_AVAILABLE:
-            return
-        if boot.LGTBot_ElainaBot.release_bot_if_not_processing_games():
-            _state.started = False
-            boot.mark_engine_running(False)
-            log.info('LGTBot 引擎已安全关闭')
-        else:
-            # 关键：保留 mark_engine_running(True)，下次 @on_load 据此跳过 start()
-            log.warning('存在进行中的游戏 —— 引擎未释放，热重载后将复用旧引擎以保持游戏状态')
-    finally:
-        # 关连接放在最后：上面 release_bot 失败也别漏掉关 DB
-        try:
-            userdb.close()
-        except Exception:
-            pass
+    if not _state.started or not boot.LGTBOT_AVAILABLE:
+        return
+    if boot.LGTBot_ElainaBot.release_bot_if_not_processing_games():
+        _state.started = False
+        boot.mark_engine_running(False)
+        log.info('LGTBot 引擎已安全关闭')
+    else:
+        # 关键：保留 mark_engine_running(True)，下次 @on_load 据此跳过 start()
+        log.warning('存在进行中的游戏 —— 引擎未释放，热重载后将复用旧引擎以保持游戏状态')
+
+    # 注意:不在此处调用 userdb.close() —— 跨重载共享的 SQLite 连接放在
+    # boot._get_persistent() 字典里 (见 userdb.py::_get_state),关掉它会让
+    # 旧 callbacks → 旧 userdb 路径在重载窗口里查询昵称全部返空,游戏内
+    # 玩家昵称会突然变成截断 openid。连接的生命周期与进程绑定即可:
+    # `os.execv` 整进程重启时 OS 自动关 fd,WAL checkpoint 走 sqlite 自身
+    # 的 `PRAGMA journal_mode = WAL` 写时机制即可,无需显式 close。

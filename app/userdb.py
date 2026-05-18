@@ -23,11 +23,24 @@
     约 5ms，可接受
   · 任何 SQLite 异常 ``log.warning`` 不传播，主流程继续；连接打不开时所有
     API 走 no-op 兜底
+
+跨热重载共享(关键):``_conn`` 和 ``_pending`` 不在模块顶级,而是放在
+``boot._get_persistent()`` 字典里 —— 旧 userdb 模块实例 (被 C++ 引擎旧
+callbacks 函数的 ``__globals__`` 引用住,gc 不掉) 和新 userdb 模块实例都通过
+``_get_state()`` 拿到**同一份**连接和 pending,热重载有活跃对局时:
+
+  · 旧 C++ → 旧 callbacks.cb_get_user_name → 旧 userdb.get_name → 同一份
+    SQLite 连接和 pending —— 不会因为新 dispatcher 写入新 _pending 旧侧读不到
+    导致昵称查询全部返空。
+  · 新 dispatcher → 新 userdb.mark_dirty → 同一份 pending —— 新玩家立即可见。
+
+整个进程全生命周期只一条 SQLite 连接,直到进程 ``os.execv`` 才真正关闭。
 """
 
 from __future__ import annotations
 import sqlite3
 import asyncio
+import threading
 import time
 from typing import Optional
 
@@ -37,15 +50,14 @@ from . import boot
 log = get_logger(PLUGIN, 'LGTBot')
 
 _FLUSH_INTERVAL_S = 300.0      # 5 分钟批量落盘
-_conn: Optional[sqlite3.Connection] = None
-# uid → {'name','avatar','last_seen'}（下次 flush 写入）
-# last_seen 在 mark_dirty 调用时刻就记下,不是 flush 时刻 —— 否则 WebUI 看到
-# 的「上次活跃」最多会比真实事件晚 5 分钟（一个完整 flush 周期）。
-_pending: dict[str, dict] = {}
+
+# flusher task 是 per-load 的(asyncio.Task 绑定当前 loop),不进持久化字典。
+# @on_load 起新 task,@on_unload 取消旧 task,各自管自己,因为它们操作的真实
+# 数据 (pending dict) 是同一份共享对象,谁起的 task flush 进去都一样。
 _flusher_task: Optional[asyncio.Task] = None
 
 
-# ──────── 连接 / Schema 初始化（模块 import 即执行）─────────────────────────
+# ──────── 连接 / Schema 初始化 ────────────────────────────────────────────
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS user_cache (
@@ -88,31 +100,60 @@ def _init_conn() -> Optional[sqlite3.Connection]:
         return None
 
 
-_conn = _init_conn()
+def _get_state() -> dict:
+    """跨热重载共享的 (conn, pending) 状态 —— 通过 ``boot._get_persistent()`` 字典。
+
+    新旧 userdb 模块实例(各自的 ``__dict__`` 不同)调本函数,都拿到**同一个**
+    dict 对象 (``boot._get_persistent()['userdb']``)。返回 dict 结构:
+      ``{'conn': sqlite3.Connection | None, 'pending': dict[str, dict]}``
+
+    懒初始化:首次访问时建 SQLite 连接和空 pending。 ``close()`` 主动把 conn 置
+    None 之后,再次调用本函数会重开连接(``pending`` 内容保留)。
+
+    线程安全:初始化路径用 ``boot._get_persistent()`` 里的同一把 Lock 串行 ——
+    Lock 本身放进字典里,新老模块也能共享同一把。
+    """
+    p = boot._get_persistent()
+    state = p.get('userdb')
+    if state is not None and state.get('conn') is not None:
+        return state
+    # 慢路径:首次创建或 conn 被 close 过,需要(重新)建连接。setdefault 保证
+    # 多线程并发首次进入时只创建一把 Lock,后续都拿同一把。
+    p.setdefault('userdb_lock', threading.Lock())
+    with p['userdb_lock']:
+        state = p.get('userdb')
+        if state is None:
+            state = {'conn': _init_conn(), 'pending': {}}
+            p['userdb'] = state
+        elif state.get('conn') is None:
+            state['conn'] = _init_conn()
+        return state
 
 
 # ──────── 读路径 ──────────────────────────────────────────────────────────
-# 查找顺序：内存 _pending → SQLite。
-#   理由：mark_dirty 写入 _pending 后,flusher 默认 5 分钟才落盘,在此之前
+# 查找顺序：内存 pending → SQLite。
+#   理由：mark_dirty 写入 pending 后,flusher 默认 5 分钟才落盘,在此之前
 #   纯走 SELECT 会查不到（新用户首次发消息后整整 5 分钟内昵称仍显示截断
-#   openid）。先看 _pending 既消除这个窗口,也比 SQLite 主键查询快一个
+#   openid）。先看 pending 既消除这个窗口,也比 SQLite 主键查询快一个
 #   数量级（dict.get ~100ns vs SELECT ~10µs）。
 #
-# 线程安全：_pending 的写都在 asyncio loop 线程串行执行,读发生在 C++
-# 工作线程。GIL 保证 dict.get 原子,`_pending = {}` 重绑定也原子,读到
-# 的总是某个一致的 dict 对象。
+# 线程安全:pending 的写都在 asyncio loop 线程串行执行,读发生在 C++
+# 工作线程。GIL 保证 dict.get 原子;flush_now 用 ``state['pending'] = {}``
+# 重绑定 dict 入口,读到的总是某个一致的 dict 对象。
 
 def get_name(openid: str) -> str:
-    """命中返回 name,未命中返回 ''。先查 _pending 再查 DB,异常吞掉返回 ''。"""
+    """命中返回 name,未命中返回 ''。先查 pending 再查 DB,异常吞掉返回 ''。"""
     if not openid:
         return ''
-    pend = _pending.get(openid)
+    state = _get_state()
+    pend = state['pending'].get(openid)
     if pend and pend.get('name'):
         return pend['name']
-    if _conn is None:
+    conn = state['conn']
+    if conn is None:
         return ''
     try:
-        cur = _conn.execute(
+        cur = conn.execute(
             'SELECT name FROM user_cache WHERE openid = ?', (openid,))
         row = cur.fetchone()
         return row[0] if row else ''
@@ -122,16 +163,18 @@ def get_name(openid: str) -> str:
 
 
 def get_avatar(openid: str) -> str:
-    """命中返回 avatar,未命中返回 ''。先查 _pending 再查 DB。"""
+    """命中返回 avatar,未命中返回 ''。先查 pending 再查 DB。"""
     if not openid:
         return ''
-    pend = _pending.get(openid)
+    state = _get_state()
+    pend = state['pending'].get(openid)
     if pend and pend.get('avatar'):
         return pend['avatar']
-    if _conn is None:
+    conn = state['conn']
+    if conn is None:
         return ''
     try:
-        cur = _conn.execute(
+        cur = conn.execute(
             'SELECT avatar FROM user_cache WHERE openid = ?', (openid,))
         row = cur.fetchone()
         return row[0] if row else ''
@@ -141,42 +184,48 @@ def get_avatar(openid: str) -> str:
 
 
 def count_users() -> int:
-    """返回当前缓存用户总数(SQLite + ``_pending`` 合并去重)。
+    """返回当前缓存用户总数(SQLite + ``pending`` 合并去重)。
 
     与 ``list_users`` 不同:本函数不取行数据、不受 limit 截断,直接给出
     完整 cardinality,适合 WebUI 顶部「总用户: N」这种汇总数字。
-    SQL 异常时降级为 ``len(_pending)``,保证调用方拿到的总是合理数字。
+    SQL 异常时降级为 ``len(pending)``,保证调用方拿到的总是合理数字。
     """
-    if _conn is None:
-        return len(_pending)
+    state = _get_state()
+    conn = state['conn']
+    pending = state['pending']
+    if conn is None:
+        return len(pending)
     try:
-        cur = _conn.execute('SELECT COUNT(*) FROM user_cache')
+        cur = conn.execute('SELECT COUNT(*) FROM user_cache')
         db_count = cur.fetchone()[0] or 0
-        if not _pending:
+        if not pending:
             return db_count
-        # _pending 里可能有还没落盘的新 openid,跟 DB 不重叠的部分要加上
-        placeholders = ','.join('?' * len(_pending))
-        cur = _conn.execute(
+        # pending 里可能有还没落盘的新 openid,跟 DB 不重叠的部分要加上
+        placeholders = ','.join('?' * len(pending))
+        cur = conn.execute(
             f'SELECT COUNT(*) FROM user_cache WHERE openid IN ({placeholders})',
-            tuple(_pending.keys()))
+            tuple(pending.keys()))
         overlap = cur.fetchone()[0] or 0
-        return db_count + len(_pending) - overlap
+        return db_count + len(pending) - overlap
     except Exception as e:
         log.debug(f'userdb.count_users 异常: {e}')
-        return len(_pending)
+        return len(pending)
 
 
 def list_users(limit: int = 1000) -> list[dict]:
-    """列出所有缓存用户(按 last_seen 倒序)。合并 ``_pending`` 中尚未落盘的条目。
+    """列出所有缓存用户(按 last_seen 倒序)。合并 ``pending`` 中尚未落盘的条目。
 
     返回列表元素: ``{'openid', 'name', 'avatar', 'last_seen'}``。
-    无 DB 连接时降级到仅返回 ``_pending``;DB 异常时也仅返回 pending。
+    无 DB 连接时降级到仅返回 ``pending``;DB 异常时也仅返回 pending。
     供 WebUI「用户数据」面板使用,limit 默认 1000 防止极端场景下网页过大。
     """
+    state = _get_state()
+    conn = state['conn']
+    pending = state['pending']
     rows: dict[str, dict] = {}
-    if _conn is not None:
+    if conn is not None:
         try:
-            cur = _conn.execute(
+            cur = conn.execute(
                 'SELECT openid, name, avatar, last_seen FROM user_cache '
                 'ORDER BY last_seen DESC LIMIT ?',
                 (limit,))
@@ -189,10 +238,10 @@ def list_users(limit: int = 1000) -> list[dict]:
                 }
         except Exception as e:
             log.debug(f'userdb.list_users 异常: {e}')
-    # 合并 _pending —— pending 比 DB 新,非空字段覆盖;last_seen 取 pending 中
+    # 合并 pending —— pending 比 DB 新,非空字段覆盖;last_seen 取 pending 中
     # mark_dirty 时刻记下的真实事件时间,不再 bump 到「现在」(那样每次 WebUI
     # 刷新都会把活跃时间拉到查询时刻,完全失真)。
-    for uid, e in _pending.items():
+    for uid, e in pending.items():
         slot = rows.setdefault(uid, {
             'openid': uid, 'name': '', 'avatar': '', 'last_seen': 0,
         })
@@ -220,7 +269,9 @@ def mark_dirty(openid: str, *, name: str = '', avatar: str = '') -> None:
     """
     if not openid:
         return
-    entry = _pending.setdefault(
+    state = _get_state()
+    pending = state['pending']
+    entry = pending.setdefault(
         openid, {'name': '', 'avatar': '', 'last_seen': 0})
     if name:
         entry['name'] = name
@@ -238,24 +289,29 @@ def flush_now() -> None:
     ``last_seen`` 用 pending 里 mark_dirty 时刻记下的值,不是 flush 时刻 ——
     这样真实事件时间不会被批量落盘的整点对齐抹掉。
     """
-    global _pending
-    if _conn is None or not _pending:
+    state = _get_state()
+    conn = state['conn']
+    pending = state['pending']
+    if conn is None or not pending:
         return
-    snapshot = _pending
-    _pending = {}
+    # 整体替换:此后新 mark_dirty 写到新 dict,snapshot 是要落盘的旧 dict
+    snapshot = pending
+    state['pending'] = {}
     rows = [(uid, e['name'], e['avatar'], e.get('last_seen') or 0)
             for uid, e in snapshot.items()]
     try:
-        _conn.execute('BEGIN')
-        _conn.executemany(_UPSERT_SQL, rows)
-        _conn.execute('COMMIT')
+        conn.execute('BEGIN')
+        conn.executemany(_UPSERT_SQL, rows)
+        conn.execute('COMMIT')
     except Exception as e:
         try:
-            _conn.execute('ROLLBACK')
+            conn.execute('ROLLBACK')
         except Exception:
             pass
+        # 失败:把 snapshot 合并回(可能已有新内容的)state['pending'],等下次重试
+        cur_pending = state['pending']
         for uid, ent in snapshot.items():
-            slot = _pending.setdefault(
+            slot = cur_pending.setdefault(
                 uid, {'name': '', 'avatar': '', 'last_seen': 0})
             if ent['name']:
                 slot['name'] = ent['name']
@@ -308,11 +364,22 @@ def stop_flusher() -> None:
 
 
 def close() -> None:
-    """关闭长连接(WAL checkpoint 在连接 close 时自动触发)。"""
-    global _conn
-    if _conn is not None:
+    """关闭跨重载共享的 SQLite 连接（WAL checkpoint 在 close 时自动触发）。
+
+    ⚠️ 注意:**默认不应从 @on_unload 调用** —— 热重载时旧 callbacks 仍要透过
+    旧 userdb 模块查这条连接。只有进程真要退出 / 引擎彻底释放后才该调用。
+    实务上 ``os.execv`` 重启时 OS 关 fd,这里几乎不会被自动调用了。
+
+    再次访问 ``_get_state()`` 会自动重开连接 —— pending 保留。
+    """
+    p = boot._get_persistent()
+    state = p.get('userdb')
+    if state is None:
+        return
+    conn = state.get('conn')
+    if conn is not None:
         try:
-            _conn.close()
+            conn.close()
         except Exception:
             pass
-        _conn = None
+        state['conn'] = None
