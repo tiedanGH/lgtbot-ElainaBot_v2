@@ -62,6 +62,50 @@ _LGT_MSG_EVENTS = frozenset({
 })
 
 
+# ──────── 用户查询(所有人可用) ────────────────────────────────────────────
+
+@handler(r'^(?i:查询id)\s+(\S+)$',
+         name='LGTBot 查询用户',
+         desc='查缓存中的昵称 / 头像 / 上次活跃',
+         priority=50,
+         event_types=_LGT_MSG_EVENTS)
+async def lgtbot_query_user(event, match):
+    """以输入的 openid 在用户缓存 DB 中查单条记录,markdown 输出。
+
+    - openid 长度必须严格 32 位,否则只回报错不查库
+    - 查不到 → 「查询失败:该 ID 不存在」
+    - 命中 → ``## 查询成功`` + 一行内嵌头像 + 昵称 + 一行上次活跃时间戳
+    """
+    target = match.group(1).strip()
+    if len(target) != 32:
+        await event.reply(f'❌ ID 长度不正确（需 32 位，当前 {len(target)} 位）')
+        return
+
+    user = userdb.get_user(target)
+    if user is None:
+        await event.reply('❌ 查询失败：该 ID 不存在')
+        return
+
+    name = user.get('name') or '[未知昵称]'
+    avatar = user.get('avatar') or ''
+    last_seen = user.get('last_seen', 0) or 0
+    time_str = (time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(last_seen))
+                if last_seen else '从未活跃')
+    # 内嵌头像 —— QQ markdown 用 `#WIDTHpx #HEIGHTpx` alt-text 控制尺寸,
+    # 40px 是「小头像」典型尺寸,行内 + 昵称 一目了然
+    avatar_md = (f'![头像 #40px #40px]({avatar})' if avatar else '[未知]')
+    md = (
+        '## ✅ 查询成功\n'
+        '\n'
+        f'{avatar_md} | **{name}**\n'
+        '\n'
+        f'```上次活跃\n'
+        f'{time_str}\n'
+        f'```'
+    )
+    await event.reply(md)
+
+
 # ──────── 消息派发 ────────────────────────────────────────────────────────
 
 @handler(r'.*', name='LGTBot 消息派发',

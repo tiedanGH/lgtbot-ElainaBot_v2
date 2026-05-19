@@ -183,6 +183,52 @@ def get_avatar(openid: str) -> str:
         return ''
 
 
+def get_user(openid: str) -> dict | None:
+    """按 openid 查单条用户记录,合并 ``pending`` 与 SQLite,任一命中即返回。
+
+    返回 ``{'openid', 'name', 'avatar', 'last_seen'}``;
+    两边都查无返回 ``None``。pending 比 DB 新,name/avatar 任一字段优先取
+    pending 中的非空值;``last_seen`` 取两者较大值。
+    """
+    if not openid:
+        return None
+    state = _get_state()
+    pend = state['pending'].get(openid)
+    row = None
+    conn = state['conn']
+    if conn is not None:
+        try:
+            cur = conn.execute(
+                'SELECT name, avatar, last_seen FROM user_cache WHERE openid = ?',
+                (openid,))
+            row = cur.fetchone()
+        except Exception as e:
+            log.debug(f'userdb.get_user 异常 ({openid}): {e}')
+    if not pend and not row:
+        return None
+    name = ''
+    avatar = ''
+    last_seen = 0
+    if row:
+        name = row[0] or ''
+        avatar = row[1] or ''
+        last_seen = row[2] or 0
+    if pend:
+        if pend.get('name'):
+            name = pend['name']
+        if pend.get('avatar'):
+            avatar = pend['avatar']
+        pend_ts = pend.get('last_seen', 0) or 0
+        if pend_ts > last_seen:
+            last_seen = pend_ts
+    return {
+        'openid': openid,
+        'name': name,
+        'avatar': avatar,
+        'last_seen': last_seen,
+    }
+
+
 def count_users() -> int:
     """返回当前缓存用户总数(SQLite + ``pending`` 合并去重)。
 
