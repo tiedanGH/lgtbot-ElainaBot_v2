@@ -237,6 +237,12 @@ void SigSegvHandler(int sig, siginfo_t* info, void* /*ucontext*/)
         ssize_t r = write(STDERR_FILENO, banner, sizeof(banner) - 1);
         (void)r;
 
+        // 进入「post-SEGV doomed」状态:heap 现在可能已损坏,任何后续 malloc/
+        // free(包括其他工作线程退出时的 tcache_thread_shutdown)都可能触发
+        // double-free → SIGABRT。在 longjmp 之前先把这个 flag 立起来,SigAbrt
+        // Handler 一旦看到就立即 execv 自启,避免主线程 30s 倒计时跑不完。
+        g_post_segv = 1;
+
         // 在 longjmp 之前把栈和上下文落盘 —— 即便后续 backtrace 自己再次出错
         // (nested SEGV) 也会被 handler 二次进入时 t_sigsegv_armed==0 分支
         // 走 SIG_DFL 终结,跟改造前等价,不比 baseline 更差。
@@ -263,6 +269,114 @@ inline void DeriveCrashDumpDir(const char* game_path) {
     if (base_len + sizeof(suffix) > sizeof(g_crash_dump_dir)) return;
     std::memcpy(g_crash_dump_dir, game_path, base_len);
     std::memcpy(g_crash_dump_dir + base_len, suffix, sizeof(suffix));  // 含 '\0'
+}
+
+// ──────── 二次崩溃兜底:SIGABRT 拦截 + 预存 execv 参数 ───────────────────────
+//
+// 背景:lgtbot SEGV 时 fwrite/malloc 等链路上的 heap 状态已被破坏,siglongjmp
+// 跳回 Python 只是「主线程暂时活着」—— 出 SEGV 的工作线程一旦正常退出,
+// glibc 在 ``tcache_thread_shutdown`` 里发现 double free → ``abort()``,整个
+// 进程被 SIGABRT 杀掉。我们 30s os.execv 倒计时根本来不及跑(实测见 user 报告
+// 的第二份 core)。
+//
+// 兜底方案:
+//   1. ``Start`` 时 Python 把 ``sys.executable`` + ``sys.argv`` 通过
+//      ``set_restart_args`` 喂进来,在静态 buffer 里固化成 C 串,避免 SIGABRT
+//      handler 临时分配触发二次崩溃。
+//   2. SigSegvHandler 在 siglongjmp 之前置 ``g_post_segv = 1``。
+//   3. 加装 SigAbrtHandler:`g_post_segv == 1` 时立刻 ``execv()`` 整进程自启
+//      (execv 是 async-signal-safe,不分配也不依赖 heap),其他情况走 SIG_DFL。
+// 这样无论 30s 倒计时跑没跑完,只要进程出 SIGABRT 都能保证自启,玩家最多
+// 损失「道歉消息送达」这一点。
+
+// 预存的 execv 参数 —— 容量定得够大但仍是固定数组,不依赖 heap。
+static constexpr size_t kExecPathMax = 4096;
+static constexpr size_t kExecArgvBufMax = 16384;
+static constexpr int    kExecArgvMax = 64;
+char g_exec_path[kExecPathMax] = {0};
+char g_exec_argv_buf[kExecArgvBufMax] = {0};
+char* g_exec_argv[kExecArgvMax + 1] = {nullptr};
+volatile sig_atomic_t g_exec_argv_ready = 0;
+volatile sig_atomic_t g_post_segv = 0;
+volatile sig_atomic_t g_already_aborting = 0;
+
+void SigAbrtHandler(int sig, siginfo_t* /*info*/, void* /*ucontext*/) {
+    // 防 handler 自己 abort 进死循环
+    if (g_already_aborting) {
+        std::signal(sig, SIG_DFL);
+        raise(sig);
+        return;
+    }
+    g_already_aborting = 1;
+
+    // 非 post-SEGV 状态:正常 abort(比如其他错误用 assert),交还默认动作
+    if (!g_post_segv) {
+        std::signal(sig, SIG_DFL);
+        raise(sig);
+        return;
+    }
+
+    // post-SEGV abort: heap 已坏,趁还能跑系统调用立刻 execv 自启
+    static const char banner[] =
+        "\n[LGTBot] post-SEGV SIGABRT trapped, forcing execv self-restart\n";
+    ssize_t r = write(STDERR_FILENO, banner, sizeof(banner) - 1);
+    (void)r;
+
+    if (g_exec_argv_ready && g_exec_path[0] && g_exec_argv[0]) {
+        execv(g_exec_path, g_exec_argv);
+        // execv 失败(仅 sys.executable 失踪等罕见场景才到这)
+        static const char fail[] = "[LGTBot] execv failed in SIGABRT handler\n";
+        r = write(STDERR_FILENO, fail, sizeof(fail) - 1);
+        (void)r;
+    } else {
+        static const char noargs[] = "[LGTBot] no execv args stashed, dying\n";
+        r = write(STDERR_FILENO, noargs, sizeof(noargs) - 1);
+        (void)r;
+    }
+    // 走到这就是 execv 也失败了,默认 abort 让 supervisor 兜底
+    std::signal(sig, SIG_DFL);
+    raise(sig);
+}
+
+// Python 启动时把 sys.executable + sys.argv 喂进来,固化到静态 buffer
+// 供 SigAbrtHandler 在 heap 已坏时使用。
+void SetRestartArgs(const std::string& exec_path, boost::python::list argv) {
+    // ── 主程序路径 ──────────────────────────────────────────────
+    size_t exec_len = exec_path.size();
+    if (exec_len >= sizeof(g_exec_path)) exec_len = sizeof(g_exec_path) - 1;
+    std::memcpy(g_exec_path, exec_path.data(), exec_len);
+    g_exec_path[exec_len] = '\0';
+
+    // ── argv 数组:第 0 项与 exec_path 同义,后接 Python 传来的 sys.argv ──
+    // 全部塞进同一个 buffer,各串以 '\0' 分隔;g_exec_argv[i] 指到对应起点。
+    char* p = g_exec_argv_buf;
+    char* end = g_exec_argv_buf + sizeof(g_exec_argv_buf);
+    int argc = 0;
+
+    auto append = [&](const char* s, size_t n) -> bool {
+        if (argc >= kExecArgvMax) return false;
+        if (p + n + 1 > end) return false;
+        g_exec_argv[argc] = p;
+        std::memcpy(p, s, n);
+        p[n] = '\0';
+        p += n + 1;
+        ++argc;
+        return true;
+    };
+
+    append(exec_path.data(), exec_len);  // argv[0]
+    const int n = static_cast<int>(boost::python::len(argv));
+    for (int i = 0; i < n; ++i) {
+        boost::python::extract<std::string> ext(argv[i]);
+        if (!ext.check()) continue;
+        std::string s = ext();
+        if (!append(s.data(), s.size())) break;
+    }
+    g_exec_argv[argc] = nullptr;  // execv 终止哨兵
+    g_exec_argv_ready = 1;
+
+    std::cerr << "[LGTBot] restart args stashed: " << g_exec_path
+              << " (argc=" << argc << ")" << std::endl;
 }
 
 // 安装 SIGSEGV / SIGBUS handler。幂等 —— 由 Start 调用一次即可。
@@ -295,6 +409,16 @@ void InstallSigSegvHandler(const char* game_path) {
     sigemptyset(&sa.sa_mask);
     sigaction(SIGSEGV, &sa, nullptr);
     sigaction(SIGBUS,  &sa, nullptr);
+
+    // ④ SIGABRT 兜底:lgtbot SEGV 后 heap 损坏,工作线程退出时 glibc
+    //    tcache_thread_shutdown 极易触发 double-free → abort(). 用我们自己的
+    //    handler 接住,如果是 post-SEGV 状态就立刻 execv 自启,不让进程死。
+    struct sigaction sa_abrt;
+    std::memset(&sa_abrt, 0, sizeof(sa_abrt));
+    sa_abrt.sa_sigaction = SigAbrtHandler;
+    sa_abrt.sa_flags = SA_SIGINFO | SA_NODEFER;
+    sigemptyset(&sa_abrt.sa_mask);
+    sigaction(SIGABRT, &sa_abrt, nullptr);
 }
 
 // 把 C 字符串截断进 thread_local char 数组(在 sigsetjmp 之前调用,signal-safe)
@@ -740,4 +864,5 @@ BOOST_PYTHON_MODULE(LGTBot_ElainaBot)
     python::def("on_private_message",             OnPrivateMessage);
     python::def("on_public_message",              OnPublicMessage);
     python::def("release_bot_if_not_processing_games", ReleaseBotIfNoProcessingGames);
+    python::def("set_restart_args",               SetRestartArgs);
 }

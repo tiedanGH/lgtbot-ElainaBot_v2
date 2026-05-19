@@ -21,6 +21,7 @@ __plugin_meta__ = {
 }
 
 import os
+import sys
 import asyncio
 
 from core.plugin.decorators import on_load, on_unload
@@ -59,6 +60,16 @@ async def _setup():
     # 主框架 MessageSender 的 push 路径打补丁(让本插件的 push 日志带上正确
     # plugin_name),幂等;放在最早 —— 任何 send_to_* 之前必须就位
     _log_attribution.install_once()
+
+    # 预存 execv 自启参数到 C++ 桥接层 —— SIGABRT handler 在 heap 已坏时
+    # 没法做任何分配,必须提前用 fixed buffer 固化 sys.executable + sys.argv。
+    # 这样 lgtbot SEGV 后即便工作线程退出引发 double-free → SIGABRT,我们的
+    # SigAbrtHandler 也能立刻 execv 整进程自启,不让进程真死。
+    if boot.LGTBOT_AVAILABLE:
+        try:
+            boot.LGTBot_ElainaBot.set_restart_args(sys.executable, list(sys.argv))
+        except Exception as e:
+            log.warning(f'set_restart_args 失败,SIGABRT 兜底自启不可用: {e}')
 
     # 注册 Web 面板拓展页（无论 LGTBot 是否可用，让用户先能看到日志页）
     webui.register()
