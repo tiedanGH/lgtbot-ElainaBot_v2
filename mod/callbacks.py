@@ -22,6 +22,7 @@ thread 持锁 → 玩家新指令排队 → 释放锁后紧接着 OnGameOver 把
 
 from __future__ import annotations
 import asyncio
+import concurrent.futures
 import os
 import sys
 import time
@@ -39,7 +40,10 @@ log = get_logger(PLUGIN, 'LGTBot')
 # (mutex/heap/pipe 都可能是脏的),所以这里**不再调任何 lgtbot 函数**,只做
 # Python 侧的事:发日志 + 给玩家道歉 + 调度 30s 后整进程 execv。
 
-_LGTBOT_CRASH_DELAY_S = 30.0       # 等多久 execv —— 留给道歉消息送达
+_LGTBOT_CRASH_DELAY_S = 30.0       # 倒计时 execv;给 framework 其他清理留 buffer
+# 工作线程被阻塞等道歉 / 通知 HTTP 完成的最长秒数 —— 必须趁线程还没退出去
+# 触发 SIGABRT 之前把"重要的事"发完。HTTP 往返通常 100–500ms,8s 是大头富余。
+_CRASH_SEND_TIMEOUT_S = 8.0
 _CRASH_APOLOGY_MD = (
     '## 💥 游戏模块发生致命错误\n'
     '\n'
@@ -108,44 +112,69 @@ def cb_lgtbot_crashed(uid: str, gid: str, is_uid: bool, msg: str, sig: int) -> N
         except Exception as e:
             log.error(f'os.execv 失败，需 supervisor 兜底: {e}')
         return
+    # preview(用户原文)只用于本地 log.error
+    # admin 凭 target + 时间戳去服务端日志反查 preview 原文即可。
+    msg_len = len(preview)
+
+    # ── Phase 1: **阻塞当前工作线程**等道歉 + 通知 HTTP 发完 ───────────────────
+    # 关键设计:cb_lgtbot_crashed 跑在出错的工作线程上,该线程一旦 return 就
+    # 进入退出流程,极可能在 glibc tcache_thread_shutdown 撞坏 heap 触发 SIGABRT
+    # (用户实测过的 case)。我们必须趁工作线程还活着,把"重要的事" —— 尤其
+    # **崩溃报告推送给管理员通知群** —— 同步发完。
+    # 用 run_coroutine_threadsafe + Future.result(timeout=) 实现跨线程阻塞等待;
+    # 超时直接放弃当前未完成的发送,避免无限卡死。
     try:
-        # preview(用户原文)只用于本地 log.error,**不**透传到通知群发送路径——
-        # 避免用户故意发违规/敏感内容触发崩溃,bot 用自己的 appid 把原文转发到
-        # 管理员群导致 QQ 风控扣分甚至封号。这里只把消息长度往下传(数字,安全);
-        # admin 凭 target + 时间戳去服务端日志反查 preview 原文即可。
-        msg_len = len(preview)
-        asyncio.run_coroutine_threadsafe(
-            _handle_crash_aftermath(uid, gid, is_uid, sig_name, msg_len), loop)
+        send_fut = asyncio.run_coroutine_threadsafe(
+            _send_crash_messages(uid, gid, is_uid, sig_name, msg_len), loop)
+        send_fut.result(timeout=_CRASH_SEND_TIMEOUT_S)
+    except concurrent.futures.TimeoutError:
+        log.warning(f'崩溃消息发送超时(>{_CRASH_SEND_TIMEOUT_S:.0f}s),仍继续重启流程')
     except Exception as e:
-        log.error(f'调度崩溃善后失败，直接 os.execv: {e}')
+        log.warning(f'崩溃消息发送异常,仍继续重启流程: {e}')
+
+    # ── Phase 2: 调度 30s 后整进程 execv (不阻塞,asyncio loop 跑) ────────────
+    # 此时道歉 + 通知 HTTP 已经发出或失败,工作线程可以返回了。30s buffer 留给
+    # 主框架其他清理工作(WebUI 日志 flush、userdb 收尾等)。中途若工作线程退出
+    # 触发 SIGABRT,C++ 桥接层的 SigAbrtHandler 会用预存的 execv 参数立即重启。
+    try:
+        asyncio.run_coroutine_threadsafe(
+            _post_send_countdown(sig_name), loop)
+    except Exception as e:
+        log.error(f'调度重启倒计时失败,直接 os.execv: {e}')
         os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
-async def _handle_crash_aftermath(uid: str, gid: str, is_uid: bool,
-                                  sig_name: str, msg_len: int) -> None:
-    """asyncio 上跑:发道歉给玩家 + 发崩溃报告给通知群 + 倒计时 + execv。
+async def _send_crash_messages(uid: str, gid: str, is_uid: bool,
+                               sig_name: str, msg_len: int) -> None:
+    """同步阻塞路径:并发发道歉 + 通知,worker 线程通过 ``Future.result`` 等完。
 
-    三步并行:
-      · 道歉(给触发崩溃的玩家,被动 msg_id 路径)
-      · 崩溃报告(给 ``CRASH_NOTIFY_GROUP`` 配的群,主动消息)
-      · ``asyncio.sleep(_LGTBOT_CRASH_DELAY_S)`` 倒计时
-
-    用 ``asyncio.create_task`` 把前两步丢出去后立刻进 sleep,避免发送阻塞
-    (quota 满时 ``_send_text_quota_managed`` 可能等 ≤15s)拖慢重启。
-
-    ``msg_len`` 是触发崩溃的用户消息长度(数字),不含用户原文 —— 见
-    cb_lgtbot_crashed 处的安全说明;``_try_send_crash_notification`` 自己用
-    ``uid`` / ``gid`` / ``is_uid`` 排版成多行 target 块。
+    用 ``asyncio.gather(*, return_exceptions=True)`` 保证一边失败不影响另一边
+    (尤其通知群推送是用户最重视的,不能被道歉发送失败牵连)。再加一层
+    ``asyncio.wait_for`` 做内部超时兜底,免得 HTTP hung 把整个 future 拖到外层
+    8s 超时才被砍。
     """
-    target_id = uid if is_uid else gid
-    if target_id:
-        asyncio.create_task(_try_send_crash_apology(target_id, is_uid))
-
+    coros = []
+    # 优先级:通知群 > 道歉。先 append 表示在 gather 里优先调度,实际 HTTP 并发。
     notify_group = CRASH_NOTIFY_GROUP
     if notify_group:
-        asyncio.create_task(_try_send_crash_notification(
+        coros.append(_try_send_crash_notification(
             notify_group, sig_name, uid, gid, is_uid, msg_len))
+    target_id = uid if is_uid else gid
+    if target_id:
+        coros.append(_try_send_crash_apology(target_id, is_uid))
+    if not coros:
+        return
+    try:
+        # 0.5s 提前量给外层 future 框架开销;留点 slack 比触发外层 timeout 干净
+        await asyncio.wait_for(
+            asyncio.gather(*coros, return_exceptions=True),
+            timeout=_CRASH_SEND_TIMEOUT_S - 0.5)
+    except asyncio.TimeoutError:
+        log.warning('崩溃消息内部 wait_for 超时,任务已取消')
 
+
+async def _post_send_countdown(sig_name: str) -> None:
+    """道歉/通知都已发完,倒计时再 execv;留 buffer 给框架其他清理。"""
     await asyncio.sleep(_LGTBOT_CRASH_DELAY_S)
     log.error(f'🔁 {_LGTBOT_CRASH_DELAY_S:.0f}s 倒计时结束，执行 os.execv 自启 (因 {sig_name})')
     try:

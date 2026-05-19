@@ -286,22 +286,14 @@ inline void DeriveCrashDumpDir(const char* game_path) {
 }
 
 // ──────── 二次崩溃兜底:SIGABRT 拦截 + 预存 execv 参数 ───────────────────────
-//
-// 背景:lgtbot SEGV 时 fwrite/malloc 等链路上的 heap 状态已被破坏,siglongjmp
-// 跳回 Python 只是「主线程暂时活着」—— 出 SEGV 的工作线程一旦正常退出,
-// glibc 在 ``tcache_thread_shutdown`` 里发现 double free → ``abort()``,整个
-// 进程被 SIGABRT 杀掉。我们 30s os.execv 倒计时根本来不及跑(实测见 user 报告
-// 的第二份 core)。
-//
-// 兜底方案:
+// 背景:SEGV 后 lgtbot 内部状态损坏,任何后续 malloc/free 都可能触发 double-free
 //   1. ``Start`` 时 Python 把 ``sys.executable`` + ``sys.argv`` 通过
 //      ``set_restart_args`` 喂进来,在静态 buffer 里固化成 C 串,避免 SIGABRT
 //      handler 临时分配触发二次崩溃。
 //   2. SigSegvHandler 在 siglongjmp 之前置 ``g_post_segv = 1``。
 //   3. 加装 SigAbrtHandler:`g_post_segv == 1` 时立刻 ``execv()`` 整进程自启
 //      (execv 是 async-signal-safe,不分配也不依赖 heap),其他情况走 SIG_DFL。
-// 这样无论 30s 倒计时跑没跑完,只要进程出 SIGABRT 都能保证自启,玩家最多
-// 损失「道歉消息送达」这一点。
+// 这样无论 30s 倒计时跑没跑完,只要进程出 SIGABRT 都能保证自启,玩家最多损失「道歉消息送达」这一点。
 // 全局状态 (g_exec_path / g_exec_argv / g_post_segv / g_already_aborting) 在
 // 文件靠前的全局变量区已声明 —— SigSegvHandler 也要置 g_post_segv。
 
