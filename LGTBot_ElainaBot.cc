@@ -96,6 +96,20 @@ thread_local volatile sig_atomic_t t_crash_is_uid = 0;
 // 留 1024 字节足够装绝对路径 + 后缀。空字符串 = 推导失败,dump 跳过。
 char g_crash_dump_dir[1024] = {0};
 
+// ──────── post-SEGV SIGABRT 兜底所需的全局状态 ─────────────────────────────
+// 背景见下方 InstallSigSegvHandler 上方的大段注释。在这里前向声明是因为
+// SigSegvHandler 自身要在 siglongjmp 之前置 g_post_segv = 1,而处理器函数
+// 定义在文件靠前位置;后续 SigAbrtHandler / SetRestartArgs 才用到这些 buffer。
+static constexpr size_t kExecPathMax = 4096;
+static constexpr size_t kExecArgvBufMax = 16384;
+static constexpr int    kExecArgvMax = 64;
+char g_exec_path[kExecPathMax] = {0};
+char g_exec_argv_buf[kExecArgvBufMax] = {0};
+char* g_exec_argv[kExecArgvMax + 1] = {nullptr};
+volatile sig_atomic_t g_exec_argv_ready = 0;
+volatile sig_atomic_t g_post_segv = 0;
+volatile sig_atomic_t g_already_aborting = 0;
+
 // ──────── async-signal-safe 串行写工具 ──────────────────────────────────────
 // 不用 printf/snprintf/fprintf —— 这些理论上可能调 locale 数据、可能死锁。
 // 全部手写,逻辑极简,只用 write(2) 这一个 syscall。
@@ -288,17 +302,8 @@ inline void DeriveCrashDumpDir(const char* game_path) {
 //      (execv 是 async-signal-safe,不分配也不依赖 heap),其他情况走 SIG_DFL。
 // 这样无论 30s 倒计时跑没跑完,只要进程出 SIGABRT 都能保证自启,玩家最多
 // 损失「道歉消息送达」这一点。
-
-// 预存的 execv 参数 —— 容量定得够大但仍是固定数组,不依赖 heap。
-static constexpr size_t kExecPathMax = 4096;
-static constexpr size_t kExecArgvBufMax = 16384;
-static constexpr int    kExecArgvMax = 64;
-char g_exec_path[kExecPathMax] = {0};
-char g_exec_argv_buf[kExecArgvBufMax] = {0};
-char* g_exec_argv[kExecArgvMax + 1] = {nullptr};
-volatile sig_atomic_t g_exec_argv_ready = 0;
-volatile sig_atomic_t g_post_segv = 0;
-volatile sig_atomic_t g_already_aborting = 0;
+// 全局状态 (g_exec_path / g_exec_argv / g_post_segv / g_already_aborting) 在
+// 文件靠前的全局变量区已声明 —— SigSegvHandler 也要置 g_post_segv。
 
 void SigAbrtHandler(int sig, siginfo_t* /*info*/, void* /*ucontext*/) {
     // 防 handler 自己 abort 进死循环
